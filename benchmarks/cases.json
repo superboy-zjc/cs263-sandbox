@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "arithmetic_precedence",
+      "category": "benign",
+      "description": "Evaluate basic integer arithmetic with Python operator precedence.",
+      "code": "2 + 3 * 4",
+      "expected": {"status": "ok", "value": 14, "stdout": ""},
+      "provenance": "Project-authored regression case"
+    },
+    {
+      "id": "list_subscript_assignment",
+      "category": "benign",
+      "description": "Read and update list elements without attribute access.",
+      "code": "values = [1, 2, 3]\nvalues[1] = 7\nvalues[0] + values[1] + values[2]",
+      "expected": {"status": "ok", "value": 11, "stdout": ""},
+      "provenance": "Project-authored regression case"
+    },
+    {
+      "id": "dict_subscript_assignment",
+      "category": "benign",
+      "description": "Read and update a dictionary using string keys.",
+      "code": "record = {'x': 2, 'y': 5}\nrecord['x'] = record['x'] + 1\nrecord['x'] * record['y']",
+      "expected": {"status": "ok", "value": 15, "stdout": ""},
+      "provenance": "Project-authored regression case"
+    },
+    {
+      "id": "branch_in_range_loop",
+      "category": "benign",
+      "description": "Combine range iteration, comparison, modulo, and conditional execution.",
+      "code": "total = 0\nfor number in range(6):\n    if number % 2 == 0:\n        total = total + number\ntotal",
+      "expected": {"status": "ok", "value": 6, "stdout": ""},
+      "provenance": "Project-authored regression case"
+    },
+    {
+      "id": "user_function_return",
+      "category": "correctness",
+      "description": "Propagate an explicit function return value to the caller.",
+      "code": "def square(number):\n    return number * number\nsquare(7)",
+      "expected": {"status": "ok", "value": 49, "stdout": ""},
+      "provenance": "Project-authored regression case"
+    },
+    {
+      "id": "function_without_return",
+      "category": "correctness",
+      "description": "Return None from a function with no return statement, regardless of its final expression.",
+      "code": "def no_return():\n    9\nno_return()",
+      "expected": {"status": "ok", "value": null, "stdout": ""},
+      "provenance": "Project-authored regression case"
+    },
+    {
+      "id": "reviewed_builtin_alias",
+      "category": "correctness",
+      "description": "Allow an alias of a reviewed builtin while checking the resolved callable.",
+      "code": "magnitude = abs\nmagnitude(-12)",
+      "expected": {"status": "ok", "value": 12, "stdout": ""},
+      "provenance": "Project-authored regression case"
+    },
+    {
+      "id": "captured_output_and_value",
+      "category": "correctness",
+      "description": "Keep captured print output separate from the final top-level expression value.",
+      "code": "print('hello')\nlen([1, 2, 3])",
+      "expected": {"status": "ok", "value": 3, "stdout": "hello\n"},
+      "provenance": "Project-authored regression case"
+    },
+    {
+      "id": "forbidden_import",
+      "category": "policy",
+      "description": "Reject imports even when the requested module appears harmless.",
+      "code": "import math",
+      "expected": {"status": "policy_rejected"},
+      "provenance": "Project-authored regression case"
+    },
+    {
+      "id": "forbidden_dunder_attribute",
+      "category": "policy",
+      "description": "Reject attribute lookup rather than exposing Python object internals.",
+      "code": "(1).__class__",
+      "expected": {"status": "policy_rejected"},
+      "provenance": "Project-authored regression case"
+    },
+    {
+      "id": "forbidden_eval",
+      "category": "policy",
+      "description": "Reject dynamic code evaluation even for a harmless expression.",
+      "code": "eval('1 + 1')",
+      "expected": {"status": "policy_rejected"},
+      "provenance": "Project-authored regression case"
+    },
+    {
+      "id": "private_budget_name",
+      "category": "policy",
+      "description": "Reject access to a reserved private name used by runtime budget implementations.",
+      "code": "_operations_count",
+      "expected": {"status": "policy_rejected"},
+      "provenance": "Project-authored regression case"
+    },
+    {
+      "id": "output_budget_exhaustion",
+      "category": "resource",
+      "description": "Stop a bounded sequence of short prints when the output budget is exhausted.",
+      "code": "for number in range(1000):\n    print('abcdefghij')",
+      "expected": {"status": "resource_limit"},
+      "provenance": "Project-authored regression case"
+    },
+    {
+      "id": "step_budget_exhaustion",
+      "category": "resource",
+      "description": "Stop bounded nested loops before they complete one million additions.",
+      "code": "total = 0\nfor outer in range(1000):\n    for inner in range(1000):\n        total = total + 1\ntotal",
+      "expected": {"status": "resource_limit"},
+      "provenance": "Project-authored regression case"
+    },
+    {
+      "id": "integer_power_precheck",
+      "category": "resource",
+      "description": "Reject an oversized power result before constructing the integer.",
+      "code": "2 ** 1000000",
+      "expected": {"status": "resource_limit"},
+      "provenance": "Project-authored regression case"
+    }
+  ]
+}

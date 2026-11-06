@@ -1,0 +1,31 @@
+# Runtime dependency versions resolved from the first verified baseline image:
+# sha256:ca17a30f97e7b20c3f9a70f8964fd508df9abc76a5f620cb8db0ee75652de812
+# Versions are fixed; selected wheels can still differ across architectures.
+# Upstream smolagents is installed from its separately checksum-pinned archive.
+anyio==4.16.0
+certifi==2026.10.23
+charset-normalizer==3.5.2
+click==8.5.0
+filelock==4.2.9
+fsspec==2026.9.0
+h11==0.16.0
+hf-xet==1.8.0
+httpcore2==2.16.0
+httpx2==2.16.0
+huggingface_hub==2.4.0
+idna==3.20
+Jinja2==3.1.6
+markdown-it-py==4.2.0
+MarkupSafe==3.0.4
+mdurl==0.1.2
+packaging==26.3
+pillow==13.0.0
+Pygments==2.21.0
+python-dotenv==1.2.4
+PyYAML==6.0.3
+requests==2.34.2
+rich==15.0.0
+tqdm==4.70.1
+truststore==0.10.5
+typing_extensions==4.16.0
+urllib3==2.8.0
