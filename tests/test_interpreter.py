@@ -1,10 +1,75 @@
 """Correctness, policy, and accounting checks for the AST interpreter."""
 
+import ast
 from dataclasses import FrozenInstanceError
 import json
 import unittest
 
-from cs263_sandbox.interpreter import Limits, run
+from sandbox.errors import (
+    ResourceLimitError,
+    SecurityViolationError,
+    UndefinedVariableError,
+    UnsupportedOperationError,
+)
+from sandbox.interpreter import Interpreter, Limits, run
+
+
+class OriginalInterfaceTest(unittest.TestCase):
+    """Keep the original package's Interpreter and Environment usable."""
+
+    def test_original_assignment_demo(self):
+        interpreter = Interpreter()
+        tree = ast.parse(
+            "x = 10\ny = 20\naddition = x + y\nsubtraction = y - x\n"
+            "multiplication = x * y\ndivision = y / x"
+        )
+        self.assertIsNone(interpreter.eval_node(tree))
+        self.assertEqual(
+            interpreter.environment.variables,
+            {
+                "x": 10,
+                "y": 20,
+                "addition": 30,
+                "subtraction": 10,
+                "multiplication": 200,
+                "division": 2.0,
+            },
+        )
+
+    def test_original_instance_preserves_its_environment(self):
+        interpreter = Interpreter()
+        interpreter.eval_node(ast.parse("x = 10"))
+        interpreter.eval_node(ast.parse("y = x + 5"))
+        self.assertEqual(interpreter.environment.get("y"), 15)
+        self.assertEqual(
+            interpreter.eval_node(ast.Name(id="x", ctx=ast.Load())), 10
+        )
+        self.assertEqual(interpreter.eval_node(ast.Constant(value=7)), 7)
+
+    def test_missing_variable_keeps_original_error(self):
+        interpreter = Interpreter()
+        with self.assertRaises(UndefinedVariableError):
+            interpreter.eval_node(ast.Name(id="missing", ctx=ast.Load()))
+        self.assertEqual(interpreter.events[-1]["decision"], "failed")
+        self.assertEqual(run("missing")["status"], "program_error")
+
+    def test_ast_entry_point_does_not_bypass_policy(self):
+        interpreter = Interpreter()
+        with self.assertRaises(SecurityViolationError):
+            interpreter.eval_node(ast.parse("x = 1\nimport math"))
+        self.assertEqual(interpreter.environment.variables, {})
+        self.assertEqual(interpreter.events[-1]["decision"], "rejected")
+        with self.assertRaises(UnsupportedOperationError):
+            interpreter.eval_node(ast.parse("class Example:\n    pass"))
+
+    def test_ast_entry_point_enforces_resource_limits(self):
+        interpreter = Interpreter(Limits(max_steps=10))
+        with self.assertRaises(ResourceLimitError):
+            interpreter.eval_node(ast.parse("while True:\n    pass"))
+
+    def test_structured_run_uses_fresh_environment(self):
+        self.assertEqual(run("x = 1")["status"], "ok")
+        self.assertEqual(run("x")["status"], "program_error")
 
 
 class InterpreterTest(unittest.TestCase):

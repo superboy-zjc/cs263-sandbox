@@ -3,7 +3,7 @@
 import os
 import unittest
 
-from cs263_sandbox import harness
+from sandbox.evaluation import harness
 
 
 @unittest.skipUnless(

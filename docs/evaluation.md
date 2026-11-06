@@ -1,5 +1,9 @@
 # Initial evaluation
 
+Run the comparison from the repository root with `python -m sandbox benchmark`.
+The evaluation tools live in `sandbox.evaluation`; the isolated worker runs as
+`python -m sandbox.evaluation.worker` inside the configured Docker container.
+
 The first experiment compares our restricted AST interpreter with the unchanged
 [smolagents executor at commit 96f33fa](https://github.com/huggingface/smolagents/blob/96f33faaf028479119ec8d34507b47694cf14e34/src/smolagents/local_python_executor.py).
 Its complete upstream package is installed in the evaluation image. The source

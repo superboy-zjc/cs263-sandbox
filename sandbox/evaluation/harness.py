@@ -309,7 +309,7 @@ def run_case(
         "python",
         image_id,
         "-m",
-        "cs263_sandbox.worker",
+        "sandbox.evaluation.worker",
     ]
     started = time.monotonic()
     evidence = {}

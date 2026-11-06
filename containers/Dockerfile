@@ -24,7 +24,7 @@ RUN python /tmp/fetch_reference.py --output /tmp/smolagents-reference.tar.gz \
     && rm /tmp/fetch_reference.py /tmp/smolagents-reference.tar.gz
 
 COPY pyproject.toml ./
-COPY src ./src
+COPY sandbox ./sandbox
 COPY benchmarks ./benchmarks
 RUN python -m pip install --no-cache-dir --no-deps . \
     && python -m pip check \
@@ -38,4 +38,4 @@ USER 10001:10001
 
 # The controller supplies the command and adds network/resource/filesystem
 # restrictions. This image alone does not establish runtime containment.
-CMD ["python", "-m", "cs263_sandbox.worker"]
+CMD ["python", "-m", "sandbox.evaluation.worker"]

@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 import sys
 
-from cs263_sandbox import harness
+from sandbox.evaluation import harness
 
 
 def main(argv: list[str] | None = None) -> int:

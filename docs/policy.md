@@ -6,6 +6,20 @@ not a claim that Python is safe to run inside a shared host process. The initial
 cases in `benchmarks/cases.json` are small, project-authored regression checks;
 they are not a published attack dataset and cannot establish an escape rate.
 
+## Implementation entry points
+
+`sandbox/interpreter.py` is the only interpreter implementation. It uses
+`Environment` from `sandbox/environment.py`, shared exceptions from
+`sandbox/errors.py`, and syntax validation and limits from `sandbox/policy.py`.
+The benchmark and reference adapter live separately in `sandbox/evaluation/`.
+
+The original `Interpreter().eval_node(ast_node)` interface keeps its instance's
+environment across calls, and modules return `None`. Its execution budgets are
+also cumulative for that instance. `run(code)` creates a fresh interpreter per
+call and returns structured diagnostics. Both entry points validate the complete
+AST and apply the same runtime checks. Runtime errors remain exceptions through
+`eval_node`; `run` reports them as a `program_error` result.
+
 ## Supported programs and results
 
 The initial subset includes integers, booleans, strings, `None`, lists,

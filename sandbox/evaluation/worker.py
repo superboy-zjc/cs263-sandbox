@@ -35,7 +35,7 @@ def execute_request(request: dict) -> dict:
         raise ValueError("The request code must be a string.")
 
     started = time.monotonic()
-    from cs263_sandbox.interpreter import Limits
+    from sandbox.interpreter import Limits
 
     overrides = request.get("limits", {})
     if type(overrides) is not dict:
@@ -47,11 +47,11 @@ def execute_request(request: dict) -> dict:
         raise ValueError("Execution limits must be positive integers.")
     limits = Limits(**overrides)
     if executor == "prototype":
-        from cs263_sandbox.interpreter import run
+        from sandbox.interpreter import run
 
         result = run(code, limits=limits)
     else:
-        from cs263_sandbox.reference import run
+        from sandbox.evaluation.reference import run
 
         result = run(code, limits=vars(limits))
     result["effective_limits"] = {

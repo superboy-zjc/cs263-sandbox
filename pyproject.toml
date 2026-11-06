@@ -13,10 +13,13 @@ dependencies = []
 test = ["pytest>=8.1"]
 
 [project.scripts]
-cs263-sandbox = "cs263_sandbox.cli:main"
+cs263-sandbox = "sandbox.evaluation.cli:main"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["."]
+include = ["sandbox*"]
+exclude = ["tests*"]
+namespaces = false
 
 [tool.ruff]
 line-length = 80

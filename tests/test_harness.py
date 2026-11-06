@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from cs263_sandbox import harness
+from sandbox.evaluation import harness
 
 
 class PipeControlTest(unittest.TestCase):
@@ -127,9 +127,9 @@ class CaseFileTest(unittest.TestCase):
 class ContainerBoundaryTest(unittest.TestCase):
     """Verify isolation arguments and cleanup on timeout without Docker."""
 
-    @mock.patch("cs263_sandbox.harness.subprocess.run")
-    @mock.patch("cs263_sandbox.harness._inspect_container")
-    @mock.patch("cs263_sandbox.harness._exchange")
+    @mock.patch("sandbox.evaluation.harness.subprocess.run")
+    @mock.patch("sandbox.evaluation.harness._inspect_container")
+    @mock.patch("sandbox.evaluation.harness._exchange")
     def test_timeout_kills_and_removes_only_its_container(
         self, exchange, inspect, run
     ):
@@ -168,9 +168,9 @@ class ContainerBoundaryTest(unittest.TestCase):
         self.assertTrue(record["cleanup_ok"])
         self.assertEqual(record["controller_errors"], [])
 
-    @mock.patch("cs263_sandbox.harness.subprocess.run")
-    @mock.patch("cs263_sandbox.harness._inspect_container")
-    @mock.patch("cs263_sandbox.harness._exchange")
+    @mock.patch("sandbox.evaluation.harness.subprocess.run")
+    @mock.patch("sandbox.evaluation.harness._inspect_container")
+    @mock.patch("sandbox.evaluation.harness._exchange")
     def test_cleanup_failure_is_recorded_without_losing_execution_result(
         self, exchange, inspect, run
     ):
@@ -200,9 +200,9 @@ class ContainerBoundaryTest(unittest.TestCase):
             record["controller_errors"], ["remove: TimeoutExpired"]
         )
 
-    @mock.patch("cs263_sandbox.harness.subprocess.run")
-    @mock.patch("cs263_sandbox.harness._inspect_container")
-    @mock.patch("cs263_sandbox.harness._exchange")
+    @mock.patch("sandbox.evaluation.harness.subprocess.run")
+    @mock.patch("sandbox.evaluation.harness._inspect_container")
+    @mock.patch("sandbox.evaluation.harness._exchange")
     def test_malformed_worker_response_is_protocol_error(
         self, exchange, inspect, run
     ):

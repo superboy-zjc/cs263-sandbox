@@ -27,7 +27,7 @@ With Python 3.11 or later and Docker running, execute from the repository root:
 
 ```sh
 docker build -f containers/Dockerfile -t cs263-sandbox:baseline .
-PYTHONPATH=src python3 -m cs263_sandbox benchmark
+python3 -m sandbox benchmark
 ```
 
 The command compares the prototype with the pinned reference executor, using a
@@ -46,12 +46,12 @@ sandbox escape. See [evaluation notes](docs/evaluation.md) for interpretation.
 To run one case or one executor:
 
 ```sh
-PYTHONPATH=src python3 -m cs263_sandbox benchmark --case user_function_return
-PYTHONPATH=src python3 -m cs263_sandbox benchmark --executor prototype
+python3 -m sandbox benchmark --case user_function_return
+python3 -m sandbox benchmark --executor prototype
 ```
 
-Run all tests, including the existing `sandbox` environment tests, in a virtual
-environment. Docker integration is skipped unless explicitly enabled:
+Run the tests in a virtual environment. Docker integration is skipped unless
+explicitly enabled:
 
 ```sh
 python3 -m venv .venv
@@ -64,3 +64,30 @@ After building the image, check the real container deadline and cleanup:
 ```sh
 CS263_DOCKER_TESTS=1 .venv/bin/python -m pytest tests/test_container.py -v
 ```
+
+## Repository layout
+
+`sandbox` is the single Python package. The interpreter uses the original
+`Environment` and shared error types, with evaluation tools kept in a subpackage:
+
+- `sandbox/interpreter.py`: dynamic AST execution and runtime policy checks.
+- `sandbox/policy.py`: supported syntax, static validation, and resource limits.
+- `sandbox/environment.py` and `sandbox/errors.py`: variable scopes and errors.
+- `sandbox/evaluation/`: benchmark command, Docker controller, worker, and pinned
+  reference adapter.
+- `benchmarks/`, `tests/`, and `docs/`: regression cases, tests, and policy and
+  evaluation notes.
+
+The original stateful interface remains available:
+
+```python
+import ast
+from sandbox.interpreter import Interpreter
+
+interpreter = Interpreter()
+interpreter.eval_node(ast.parse("x = 10\ny = x + 5"))
+assert interpreter.environment.get("y") == 15
+```
+
+`sandbox.interpreter.run(code)` uses the same interpreter with fresh state and
+returns the value, captured output, and execution diagnostics as a dictionary.
