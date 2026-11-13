@@ -69,6 +69,7 @@ _ALLOWED_NODES = frozenset(
         ast.Assign,
         ast.AugAssign,
         ast.Subscript,
+        ast.Slice,
         ast.BinOp,
         ast.UnaryOp,
         ast.BoolOp,
@@ -274,5 +275,15 @@ class Policy:
             self.stop(
                 "unsupported",
                 "Only name and subscript assignment are supported",
+                node,
+            )
+
+        if (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.slice, ast.Slice)
+        ):
+            self.stop(
+                "unsupported",
+                "Slice assignment is not supported",
                 node,
             )

@@ -37,6 +37,8 @@ semantics: only `return` supplies a function result, and falling off the end of 
 function returns `None`, even when its final statement is an expression. Printed
 text is captured separately from the result.
 
+Lists and strings support slicing to retrieve a portion of their contents. A slice has three optional parameters: start, stop, and step. Each can be an integer or None. Negative indices count from the end of the sequence, while a negative step traverses it in reverse. A step of zero is invalid.
+
 ## Runtime checks and state
 
 Policy checks apply to the operation and its resolved value at execution time.
