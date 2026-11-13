@@ -304,6 +304,66 @@ class InterpreterTest(unittest.TestCase):
         for kwargs in ({"max_steps": 0}, {"max_int_bits": True}):
             with self.assertRaises(ValueError):
                 Limits(**kwargs)
+    def test_slice_reads(self):
+        examples = (
+            ("[10,20,30,40][1:3]", [20, 30]),
+            ("[10,20,30][:2]", [10, 20]),
+            ("[10,20,30][-2:]", [20, 30]),
+            ("[10,20,30][::2]", [10, 30]),
+            ("[10,20,30][::-1]", [30, 20, 10]),
+            ("[10,20,30][1:99]", [20, 30]),
+            ("[10,20,30][2:1]", []),
+            ("'hello'[1:4]", "ell"),
+            ("'hello'[::-1]", "olleh"),
+            ("start=1\n[10,20,30][start:start+2]", [20, 30]),
+        )
+        for code, expected in examples:
+            with self.subTest(code=code):
+                self.assert_value(code, expected)
+
+    def test_slice_reads(self):
+        examples = (
+            ("[10,20,30,40][1:3]", [20, 30]),
+            ("[10,20,30][:2]", [10, 20]),
+            ("[10,20,30][-2:]", [20, 30]),
+            ("[10,20,30][::2]", [10, 30]),
+            ("[10,20,30][::-1]", [30, 20, 10]),
+            ("[10,20,30][1:99]", [20, 30]),
+            ("[10,20,30][2:1]", []),
+            ("'hello'[1:4]", "ell"),
+            ("'hello'[::-1]", "olleh"),
+            ("start=1\n[10,20,30][start:start+2]", [20, 30]),
+        )
+        for code, expected in examples:
+            with self.subTest(code=code):
+                self.assert_value(code, expected)
+
+    def test_slice_errors(self):
+        for code in (
+            "[1,2,3][::0]",
+            "[1,2,3]['x':]",
+            "{'x':1}[:]",
+            "range(3)[:]",
+        ):
+            with self.subTest(code=code):
+                self.assertEqual(
+                    run(code)["status"], "program_error"
+                )
+    def test_slice_assignment_rejected_before_execution(self):
+        for operation in ("x[1:2]=[9]", "x[1:2]+=[9]"):
+            with self.subTest(operation=operation):
+                result = run(
+                    "print('before')\nx=[1,2,3]\n" + operation)
+                self.assertEqual(result["status"], "unsupported")
+                self.assertEqual(result["stdout"], "")
+                self.assertEqual(result["steps"], 0)
+
+    def test_slice_returns_a_shallow_copy(self):
+        self.assert_value(
+            "x=[[1],2,3]\ny=x[:]\n"
+            "y[1]=9\ny[0][0]=8\n[x,y]",
+            [[[8], 2, 3], [[8], 9, 3]],
+        )
 
 
 if __name__ == "__main__":

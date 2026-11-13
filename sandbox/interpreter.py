@@ -185,9 +185,55 @@ class Interpreter:
             if name in _BUILTINS:
                 return _BUILTINS[name]
             raise
+    def read_slice(self, node: ast.Slice, scope: Environment) -> slice:
+        self.tick(node)
 
+        parts = []
+        for part in (node.lower, node.upper, node.step):
+            value = (
+                self.evaluate(part, scope)
+                if part is not None
+                else None
+            )
+            parts.append(value)
+
+        if any(
+            value is not None and type(value) not in (int, bool)
+            for value in parts
+        ):
+            raise TypeError("Slice bounds must be integers or None")
+
+        return slice(*parts)
     def read_subscript(self, node: ast.Subscript, scope: Environment) -> Any:
         container = self.evaluate(node.value, scope)
+
+        if isinstance(node.slice, ast.Slice):
+            index = self.read_slice(node.slice, scope)
+
+            if type(container) not in (list, str):
+                raise TypeError(
+                    "Slice reads support only lists and strings"
+                )
+
+            # Calculate result length before allocating the slice.
+            start, stop, step = index.indices(len(container))
+            size = len(range(start, stop, step))
+
+            maximum = (
+                self.limits.max_collection_items
+                if type(container) is list
+                else self.limits.max_source_bytes
+            )
+            if size > maximum:
+                self.stop(
+                    "resource_limit",
+                    "Slice result size limit exceeded",
+                    node,
+                )
+
+            return self.checked(container[index])
+
+        # Preserve ordinary indexing.
         index = self.evaluate(node.slice, scope)
         if type(container) not in (list, dict, str, range):
             raise TypeError("Value does not support indexing")
