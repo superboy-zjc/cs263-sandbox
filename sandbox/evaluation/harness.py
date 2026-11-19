@@ -7,10 +7,13 @@ import math
 import os
 from pathlib import Path
 import re
+import secrets
 import selectors
 import subprocess
 import time
 import uuid
+
+from sandbox.evaluation.bootstrap import CANARY_ENVIRONMENT_VARIABLE
 
 
 REFERENCE_COMMIT = "96f33faaf028479119ec8d34507b47694cf14e34"
@@ -27,6 +30,15 @@ EXECUTOR_STATUSES = frozenset(
         "output_error",
         "infrastructure_error",
     }
+)
+CASE_CATEGORIES = frozenset(
+    {"attack", "benign", "correctness", "policy", "resource"}
+)
+ATTACK_ORACLE_KINDS = frozenset(
+    {"canary_exposure", "outer_termination"}
+)
+OUTER_TERMINATION_STATUSES = frozenset(
+    {"crashed", "oom_killed", "protocol_limit", "wall_timeout"}
 )
 
 
@@ -78,12 +90,10 @@ def load_cases(path: Path) -> tuple[list[dict], str]:
         if identifier in identifiers:
             raise ValueError(f"Duplicate case identifier: {identifier}")
         identifiers.add(identifier)
-        if type(case.get("category")) is not str or case["category"] not in {
-            "benign",
-            "correctness",
-            "policy",
-            "resource",
-        }:
+        if (
+            type(case.get("category")) is not str
+            or case["category"] not in CASE_CATEGORIES
+        ):
             raise ValueError(f"Unknown category for {identifier}.")
         if type(case.get("code")) is not str:
             raise ValueError(f"Code must be a string for {identifier}.")
@@ -96,7 +106,57 @@ def load_cases(path: Path) -> tuple[list[dict], str]:
             or expected.get("status") not in EXECUTOR_STATUSES
         ):
             raise ValueError(f"Missing or invalid expectation: {identifier}")
+        if case["category"] == "attack":
+            _validate_attack_case(case)
     return cases, hashlib.sha256(payload).hexdigest()
+
+
+def _validate_attack_case(case: dict) -> None:
+    """Require auditable provenance and an independent success oracle."""
+    identifier = case["id"]
+    for field in ("description", "attack_goal"):
+        if type(case.get(field)) is not str or not case[field].strip():
+            raise ValueError(f"Attack case {identifier} needs {field}.")
+
+    provenance = case.get("provenance")
+    required_provenance = (
+        "source_title",
+        "source_url",
+        "source_locator",
+        "adaptation",
+    )
+    if type(provenance) is not dict or any(
+        type(provenance.get(field)) is not str
+        or not provenance[field].strip()
+        for field in required_provenance
+    ):
+        raise ValueError(
+            f"Attack case {identifier} needs complete provenance."
+        )
+    if re.fullmatch(r"https://[^\s]+", provenance["source_url"]) is None:
+        raise ValueError(f"Attack case {identifier} needs an HTTPS source URL.")
+
+    oracle = case.get("oracle")
+    if (
+        type(oracle) is not dict
+        or type(oracle.get("kind")) is not str
+        or oracle["kind"] not in ATTACK_ORACLE_KINDS
+    ):
+        raise ValueError(f"Attack case {identifier} needs a valid oracle.")
+    if oracle["kind"] == "outer_termination":
+        statuses = oracle.get("success_statuses")
+        if (
+            type(statuses) is not list
+            or not statuses
+            or any(
+                type(status) is not str
+                or status not in OUTER_TERMINATION_STATUSES
+                for status in statuses
+            )
+        ):
+            raise ValueError(
+                f"Attack case {identifier} has invalid termination statuses."
+            )
 
 
 def resolve_image(image: str) -> str:
@@ -253,6 +313,43 @@ def matches_expected(observed: dict, expected: dict) -> bool:
     return True
 
 
+def evaluate_attack_oracle(
+    case: dict,
+    observed: dict,
+    worker_stdout: bytes,
+    worker_stderr: bytes,
+    canary: str | None,
+) -> dict | None:
+    """Evaluate attack success without trusting an executor's status label."""
+    oracle = case.get("oracle")
+    if oracle is None:
+        return None
+    kind = oracle["kind"]
+    if kind == "canary_exposure":
+        if canary is None:
+            raise ValueError("Canary oracle requires a per-run canary.")
+        marker = canary.encode("ascii")
+        channels = []
+        if marker in worker_stdout:
+            channels.append("worker_stdout")
+        if marker in worker_stderr:
+            channels.append("worker_stderr")
+        return {
+            "kind": kind,
+            "attack_success": bool(channels),
+            "evidence_channels": channels,
+        }
+    if kind == "outer_termination":
+        status = observed.get("status")
+        return {
+            "kind": kind,
+            "attack_success": status in oracle["success_statuses"],
+            "observed_status": status,
+            "success_statuses": oracle["success_statuses"],
+        }
+    raise ValueError("Unknown attack oracle.")
+
+
 def run_case(
     case: dict,
     executor: str,
@@ -267,6 +364,12 @@ def run_case(
     request = json.dumps({"executor": executor, "code": case["code"]}).encode()
     if len(request) > 65_536:
         raise ValueError("Case exceeds the worker protocol limit.")
+    oracle = case.get("oracle")
+    canary = (
+        secrets.token_hex(32)
+        if oracle is not None and oracle["kind"] == "canary_exposure"
+        else None
+    )
     command = [
         "docker",
         "run",
@@ -305,17 +408,31 @@ def run_case(
         "CS263_ISOLATED_WORKER=1",
         "--env",
         "PYTHONDONTWRITEBYTECODE=1",
-        "--entrypoint",
-        "python",
-        image_id,
-        "-m",
-        "sandbox.evaluation.worker",
     ]
+    if canary is not None:
+        command.extend(
+            ["--env", f"{CANARY_ENVIRONMENT_VARIABLE}={canary}"]
+        )
+    command.extend(
+        [
+            "--entrypoint",
+            "python",
+            image_id,
+            "-m",
+            (
+                "sandbox.evaluation.bootstrap"
+                if canary is not None
+                else "sandbox.evaluation.worker"
+            ),
+        ]
+    )
     started = time.monotonic()
     evidence = {}
     controller_errors = []
     execution_wall_ms = None
     cleanup_ok = False
+    output = b""
+    stderr = b""
     observed = _failure("infrastructure_error", "Controller did not complete.")
     try:
         exit_code, output, stderr, reason = _exchange(
@@ -377,10 +494,16 @@ def run_case(
                 controller_errors.append("remove: Docker returned a failure.")
         except (OSError, subprocess.TimeoutExpired) as error:
             controller_errors.append(f"remove: {type(error).__name__}")
+    attack_oracle = evaluate_attack_oracle(
+        case, observed, output, stderr, canary
+    )
     return {
         "schema_version": 1,
         "case_id": case["id"],
         "category": case["category"],
+        "description": case.get("description"),
+        "attack_goal": case.get("attack_goal"),
+        "provenance": case.get("provenance"),
         "executor": executor,
         "reference_commit": REFERENCE_COMMIT,
         "case_sha256": hashlib.sha256(case["code"].encode()).hexdigest(),
@@ -393,6 +516,7 @@ def run_case(
         "expected": case["expected"],
         "observed": observed,
         "matches_expected": matches_expected(observed, case["expected"]),
+        "attack_oracle": attack_oracle,
         "container": evidence,
         "container_name": name,
         "cleanup_ok": cleanup_ok,

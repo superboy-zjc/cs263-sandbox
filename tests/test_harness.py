@@ -123,6 +123,97 @@ class CaseFileTest(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 harness.Settings(wall_seconds=value)
 
+    def test_attack_cases_require_provenance_and_oracle(self):
+        attack = {
+            "id": "attack",
+            "category": "attack",
+            "description": "Attempt to expose the evaluation canary.",
+            "attack_goal": "Read a file outside the language policy.",
+            "code": "open('/tmp/canary').read()",
+            "expected": {"status": "policy_rejected"},
+            "provenance": {
+                "source_title": "Example",
+                "source_url": "https://example.com/source",
+                "source_locator": "Example section",
+                "adaptation": "Changed the target to the canary.",
+            },
+            "oracle": {"kind": "canary_exposure"},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "cases.json"
+            for changes in (
+                {"provenance": None},
+                {"oracle": None},
+                {"oracle": {"kind": "unknown"}},
+            ):
+                path.write_text(
+                    json.dumps(
+                        {
+                            "schema_version": 1,
+                            "cases": [attack | changes],
+                        }
+                    )
+                )
+                with (
+                    self.subTest(changes=changes),
+                    self.assertRaises(ValueError),
+                ):
+                    harness.load_cases(path)
+
+    def test_attack_suite_loads(self):
+        cases, fingerprint = harness.load_cases(
+            Path("benchmarks/attacks.json")
+        )
+        self.assertGreaterEqual(len(cases), 10)
+        self.assertTrue(all(case["category"] == "attack" for case in cases))
+        self.assertEqual(len(fingerprint), 64)
+
+
+class AttackOracleTest(unittest.TestCase):
+    """Check success independently from executor status classification."""
+
+    def test_canary_in_raw_worker_output_is_success(self):
+        canary = "c" * 64
+        case = {"oracle": {"kind": "canary_exposure"}}
+        observed = {"status": "program_error"}
+
+        result = harness.evaluate_attack_oracle(
+            case,
+            observed,
+            json.dumps({"stdout": canary}).encode(),
+            b"",
+            canary,
+        )
+
+        self.assertTrue(result["attack_success"])
+        self.assertEqual(result["evidence_channels"], ["worker_stdout"])
+
+    def test_rejection_is_not_itself_oracle_evidence(self):
+        result = harness.evaluate_attack_oracle(
+            {"oracle": {"kind": "canary_exposure"}},
+            {"status": "policy_rejected"},
+            b'{"status":"policy_rejected"}',
+            b"",
+            "d" * 64,
+        )
+
+        self.assertFalse(result["attack_success"])
+        self.assertEqual(result["evidence_channels"], [])
+
+    def test_outer_termination_uses_explicit_statuses(self):
+        case = {
+            "oracle": {
+                "kind": "outer_termination",
+                "success_statuses": ["wall_timeout", "oom_killed"],
+            }
+        }
+
+        result = harness.evaluate_attack_oracle(
+            case, {"status": "wall_timeout"}, b"", b"", None
+        )
+
+        self.assertTrue(result["attack_success"])
+
 
 class ContainerBoundaryTest(unittest.TestCase):
     """Verify isolation arguments and cleanup on timeout without Docker."""
@@ -220,6 +311,48 @@ class ContainerBoundaryTest(unittest.TestCase):
         )
         self.assertEqual(record["observed"]["status"], "protocol_error")
         self.assertFalse(record["matches_expected"])
+
+    @mock.patch("sandbox.evaluation.harness.subprocess.run")
+    @mock.patch("sandbox.evaluation.harness._inspect_container")
+    @mock.patch("sandbox.evaluation.harness._exchange")
+    def test_canary_case_uses_bootstrap_and_records_oracle(
+        self, exchange, inspect, run
+    ):
+        observed = {
+            "status": "policy_rejected",
+            "value": None,
+            "stdout": "",
+            "events": [],
+            "steps": 0,
+            "error": "blocked",
+        }
+        exchange.return_value = (0, json.dumps(observed).encode(), b"", None)
+        inspect.return_value = {"oom_killed": False, "exit_code": 0}
+        run.return_value = subprocess.CompletedProcess([], 0)
+        case = {
+            "id": "test",
+            "category": "attack",
+            "description": "A test attack.",
+            "attack_goal": "Read the canary.",
+            "code": "open('/tmp/canary').read()",
+            "expected": {"status": "policy_rejected"},
+            "provenance": {},
+            "oracle": {"kind": "canary_exposure"},
+        }
+
+        record = harness.run_case(
+            case, "prototype", "sha256:example", harness.Settings(), "suite"
+        )
+
+        command = exchange.call_args.args[0]
+        self.assertIn("sandbox.evaluation.bootstrap", command)
+        self.assertTrue(
+            any(
+                value.startswith("CS263_EVALUATION_CANARY=")
+                for value in command
+            )
+        )
+        self.assertFalse(record["attack_oracle"]["attack_success"])
 
 
 if __name__ == "__main__":

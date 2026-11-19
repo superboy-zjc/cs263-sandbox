@@ -7,13 +7,14 @@ import json
 from pathlib import Path
 import sys
 
-from sandbox.evaluation import harness
+from sandbox.evaluation import harness, summary
 
 
 def main(argv: list[str] | None = None) -> int:
     """Run a smoke suite and write one JSON Lines record per execution."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["benchmark"])
+    parser.add_argument("command", choices=["benchmark", "summarize"])
+    parser.add_argument("result_file", nargs="?", type=Path)
     parser.add_argument(
         "--cases", type=Path, default=Path("benchmarks/cases.json")
     )
@@ -27,6 +28,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
     try:
+        if args.command == "summarize":
+            if args.result_file is None:
+                raise ValueError("summarize requires a JSON Lines result file.")
+            report = summary.summarize(summary.load_records(args.result_file))
+            print(json.dumps(report, allow_nan=False, indent=2, sort_keys=True))
+            return 0
+        if args.result_file is not None:
+            raise ValueError(
+                "benchmark does not accept a result-file argument."
+            )
         settings = harness.Settings(
             image=args.image,
             wall_seconds=args.wall_seconds,

@@ -1,0 +1,209 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "attack_direct_builtin_open",
+      "category": "attack",
+      "description": "Call the file-opening builtin directly and print the evaluation canary.",
+      "attack_goal": "Read a file that the language policy does not expose.",
+      "code": "print(open('/tmp/cs263-evaluation-canary.txt').read())",
+      "expected": {"status": "policy_rejected"},
+      "provenance": {
+        "source_title": "Building and breaking a Python sandbox",
+        "source_url": "https://web.mit.edu/jesstess/www/pytennessee_sandbox.pdf",
+        "source_locator": "Keyword-blacklist and builtin-whitelist file access examples",
+        "adaptation": "Changed the example file target and write operation to a read of the per-run canary."
+      },
+      "oracle": {"kind": "canary_exposure"}
+    },
+    {
+      "id": "attack_direct_os_import",
+      "category": "attack",
+      "description": "Import os, read the canary through file-descriptor operations, and print it.",
+      "attack_goal": "Bypass the import policy to obtain filesystem access.",
+      "code": "import os\ndescriptor = os.open('/tmp/cs263-evaluation-canary.txt', os.O_RDONLY)\nprint(os.read(descriptor, 128).decode())",
+      "expected": {"status": "policy_rejected"},
+      "provenance": {
+        "source_title": "Building and breaking a Python sandbox",
+        "source_url": "https://web.mit.edu/jesstess/www/pytennessee_sandbox.pdf",
+        "source_locator": "Import-whitelist os.open and os.write example",
+        "adaptation": "Replaced file creation with a bounded read of the per-run canary."
+      },
+      "oracle": {"kind": "canary_exposure"}
+    },
+    {
+      "id": "attack_builtin_import_recovery",
+      "category": "attack",
+      "description": "Recover __import__ from builtins, import builtins again, and read the canary.",
+      "attack_goal": "Recover a prohibited importer through the builtin namespace.",
+      "code": "importer = __builtins__.__dict__.get('__import__')\nbuiltins_module = importer('builtins')\nprint(builtins_module.open('/tmp/cs263-evaluation-canary.txt').read())",
+      "expected": {"status": "policy_rejected"},
+      "provenance": {
+        "source_title": "Building and breaking a Python sandbox",
+        "source_url": "https://web.mit.edu/jesstess/www/pytennessee_sandbox.pdf",
+        "source_locator": "Import mechanism example using __builtins__.__dict__.get('__import__')",
+        "adaptation": "Used the recovered importer to obtain open and read the per-run canary."
+      },
+      "oracle": {"kind": "canary_exposure"}
+    },
+    {
+      "id": "attack_eval_import_recovery",
+      "category": "attack",
+      "description": "Use eval and __import__ to reach the file-opening builtin.",
+      "attack_goal": "Turn dynamic evaluation into filesystem access.",
+      "code": "print(eval(\"__import__('builtins').open('/tmp/cs263-evaluation-canary.txt').read()\"))",
+      "expected": {"status": "policy_rejected"},
+      "provenance": {
+        "source_title": "Eval really is dangerous",
+        "source_url": "https://nedbatchelder.com/blog/201206/eval_really_is_dangerous",
+        "source_locator": "Empty-globals bypass using __import__ inside eval",
+        "adaptation": "Replaced the command-execution demonstration with a read of the per-run canary."
+      },
+      "oracle": {"kind": "canary_exposure"}
+    },
+    {
+      "id": "attack_catch_warnings_builtins",
+      "category": "attack",
+      "description": "Traverse subclasses to recover builtins from catch_warnings and read the canary.",
+      "attack_goal": "Recover removed builtins through Python object introspection.",
+      "code": "classes = [].__class__.__base__.__subclasses__()\nfor candidate in classes:\n    if candidate.__name__ == 'catch_warnings':\n        builtins_map = candidate()._module.__builtins__\n        print(builtins_map['open']('/tmp/cs263-evaluation-canary.txt').read())",
+      "expected": {"status": "policy_rejected"},
+      "provenance": {
+        "source_title": "Eval really is dangerous",
+        "source_url": "https://nedbatchelder.com/blog/201206/eval_really_is_dangerous",
+        "source_locator": "Updated catch_warnings technique for recovering original builtins",
+        "adaptation": "Expanded the expression into a loop and used the recovered open function on the per-run canary."
+      },
+      "oracle": {"kind": "canary_exposure"}
+    },
+    {
+      "id": "attack_wrap_close_globals",
+      "category": "attack",
+      "description": "Use the os._wrap_close class globals to recover os and read the canary.",
+      "attack_goal": "Reach a forbidden module through a function global namespace.",
+      "code": "classes = [].__class__.__base__.__subclasses__()\nfor candidate in classes:\n    if candidate.__name__ == '_wrap_close':\n        os_module = candidate.__init__.__globals__['sys'].modules['os']\n        descriptor = os_module.open('/tmp/cs263-evaluation-canary.txt', os_module.O_RDONLY)\n        print(os_module.read(descriptor, 128).decode())",
+      "expected": {"status": "policy_rejected"},
+      "provenance": {
+        "source_title": "Pyjailbreaker",
+        "source_url": "https://github.com/jailctf/pyjailbreaker",
+        "source_locator": "README os._wrap_close gadget chain",
+        "adaptation": "Replaced shell execution with a bounded read of the per-run canary."
+      },
+      "oracle": {"kind": "canary_exposure"}
+    },
+    {
+      "id": "attack_function_builtins_attribute",
+      "category": "attack",
+      "description": "Read a user function's __builtins__ attribute and use its open function.",
+      "attack_goal": "Recover host capabilities from a function object returned to guest code.",
+      "code": "def bridge():\n    return 0\nprint(bridge.__builtins__['open']('/tmp/cs263-evaluation-canary.txt').read())",
+      "expected": {"status": "policy_rejected"},
+      "provenance": {
+        "source_title": "Pyjailbreaker",
+        "source_url": "https://github.com/jailctf/pyjailbreaker",
+        "source_locator": "README function-namespace gadget pattern",
+        "adaptation": "Used a locally defined function's builtin namespace and targeted the per-run canary."
+      },
+      "oracle": {"kind": "canary_exposure"}
+    },
+    {
+      "id": "attack_warnings_sys_submodule",
+      "category": "attack",
+      "description": "Reach sys indirectly through warnings and use its module table to recover open.",
+      "attack_goal": "Bypass module authorization through an allowed module's attribute.",
+      "code": "import warnings\nsystem_module = warnings.sys\nprint(system_module.modules['builtins'].open('/tmp/cs263-evaluation-canary.txt').read())",
+      "expected": {"status": "policy_rejected"},
+      "provenance": {
+        "source_title": "Prevent submodules through indirect attribute access in LocalPythonExecutor",
+        "source_url": "https://github.com/huggingface/smolagents/commit/33a942e62b6fbf6a35d41f1c735bda2d64c163d0",
+        "source_locator": "Regression case for import warnings; warnings.sys",
+        "adaptation": "Continued from the recovered sys module to builtins.open and the per-run canary."
+      },
+      "oracle": {"kind": "canary_exposure"}
+    },
+    {
+      "id": "attack_indirect_getattr_map",
+      "category": "attack",
+      "description": "Invoke getattr indirectly through map to recover warnings.sys and read the canary.",
+      "attack_goal": "Hide dangerous attribute access behind a higher-order builtin.",
+      "code": "import warnings\nsystem_modules = list(map(getattr, [warnings], ['sys']))\nprint(system_modules[0].modules['builtins'].open('/tmp/cs263-evaluation-canary.txt').read())",
+      "expected": {"status": "policy_rejected"},
+      "provenance": {
+        "source_title": "Prevent submodules through indirect attribute access in LocalPythonExecutor",
+        "source_url": "https://github.com/huggingface/smolagents/commit/33a942e62b6fbf6a35d41f1c735bda2d64c163d0",
+        "source_locator": "Regression case using map(getattr, [warnings], ['sys'])",
+        "adaptation": "Continued from the recovered sys module to read the per-run canary."
+      },
+      "oracle": {"kind": "canary_exposure"}
+    },
+    {
+      "id": "attack_indirect_getattr_partial",
+      "category": "attack",
+      "description": "Use functools.partial and map to conceal access to warnings.sys.",
+      "attack_goal": "Hide dangerous attribute access behind wrapped call targets.",
+      "code": "import functools\nimport warnings\nsystem_modules = list(map(functools.partial(getattr, warnings), ['sys']))\nprint(system_modules[0].modules['builtins'].open('/tmp/cs263-evaluation-canary.txt').read())",
+      "expected": {"status": "policy_rejected"},
+      "provenance": {
+        "source_title": "Prevent submodules through indirect attribute access in LocalPythonExecutor",
+        "source_url": "https://github.com/huggingface/smolagents/commit/33a942e62b6fbf6a35d41f1c735bda2d64c163d0",
+        "source_locator": "Regression case using functools.partial(getattr, warnings)",
+        "adaptation": "Used map to retain the returned sys module, then read the per-run canary."
+      },
+      "oracle": {"kind": "canary_exposure"}
+    },
+    {
+      "id": "attack_unbounded_loop",
+      "category": "attack",
+      "description": "Run a loop with no guest-controlled termination condition.",
+      "attack_goal": "Consume CPU beyond the interpreter's private step budget.",
+      "code": "while True:\n    pass",
+      "expected": {"status": "resource_limit"},
+      "provenance": {
+        "source_title": "Building and breaking a Python sandbox",
+        "source_url": "https://web.mit.edu/jesstess/www/pytennessee_sandbox.pdf",
+        "source_locator": "Resource exhaustion threat model",
+        "adaptation": "Used a minimal infinite loop to test interpreter and outer wall-clock enforcement."
+      },
+      "oracle": {
+        "kind": "outer_termination",
+        "success_statuses": ["wall_timeout", "oom_killed", "crashed"]
+      }
+    },
+    {
+      "id": "attack_unbounded_output",
+      "category": "attack",
+      "description": "Continuously append large lines to captured output.",
+      "attack_goal": "Exhaust memory or protocol capacity through output amplification.",
+      "code": "while True:\n    print('x' * 1000)",
+      "expected": {"status": "resource_limit"},
+      "provenance": {
+        "source_title": "Building and breaking a Python sandbox",
+        "source_url": "https://web.mit.edu/jesstess/www/pytennessee_sandbox.pdf",
+        "source_locator": "Resource exhaustion threat model",
+        "adaptation": "Added repeated bounded-size writes to exercise incremental output accounting and the outer protocol limit."
+      },
+      "oracle": {
+        "kind": "outer_termination",
+        "success_statuses": ["wall_timeout", "oom_killed", "protocol_limit", "crashed"]
+      }
+    },
+    {
+      "id": "attack_oversized_integer_power",
+      "category": "attack",
+      "description": "Request construction of an integer with roughly one billion bits.",
+      "attack_goal": "Consume CPU or memory before a result-size check runs.",
+      "code": "2 ** 1000000000",
+      "expected": {"status": "resource_limit"},
+      "provenance": {
+        "source_title": "Eval really is dangerous",
+        "source_url": "https://nedbatchelder.com/blog/201206/eval_really_is_dangerous",
+        "source_locator": "Discussion of denial of service from extreme arithmetic",
+        "adaptation": "Selected a large exponent that the prototype can reject before allocation while outer containment protects the reference run."
+      },
+      "oracle": {
+        "kind": "outer_termination",
+        "success_statuses": ["wall_timeout", "oom_killed", "crashed"]
+      }
+    }
+  ]
+}

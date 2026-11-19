@@ -73,3 +73,8 @@ forbidden by the language policy. This avoids letting outer isolation hide a
 missing interpreter check. Related payload variants should stay together when
 forming development and held-out splits. Record provenance, adaptations, policy
 assumptions, exclusions, and both security and compatibility outcomes.
+
+The initial implementation of this design is documented in
+[attack-evaluation.md](attack-evaluation.md). It uses a fresh canary inside each
+disposable container for information-disclosure cases and external termination
+evidence for resource-exhaustion cases.

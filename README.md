@@ -43,6 +43,21 @@ evidence. Interpreter limits and outer-container terminations are reported
 separately. An expectation mismatch is a regression observation, not a confirmed
 sandbox escape. See [evaluation notes](docs/evaluation.md) for interpretation.
 
+The first provenance-tracked attack suite adds ten information-disclosure
+techniques and three resource-exhaustion techniques. Information-disclosure
+success is detected by a host-side check for a fresh per-run canary; resource
+success is detected from outer container termination rather than an executor's
+own status label:
+
+```sh
+python3 -m sandbox benchmark --cases benchmarks/attacks.json
+python3 -m sandbox summarize results/<result-file>.jsonl
+```
+
+See [attack evaluation](docs/attack-evaluation.md) for the threat model,
+provenance, observability design, initial result, and limitations. This starter
+suite is not a comprehensive Python sandbox-escape corpus.
+
 To run one case or one executor:
 
 ```sh
@@ -57,6 +72,7 @@ explicitly enabled:
 python3 -m venv .venv
 .venv/bin/python -m pip install -e '.[test]'
 .venv/bin/python -m pytest -q
+.venv/bin/ruff check .
 ```
 
 After building the image, check the real container deadline and cleanup:
