@@ -211,12 +211,18 @@ class CaseFileTest(unittest.TestCase):
             "category": "attack",
             "description": "Attempt to expose the evaluation canary.",
             "attack_goal": "Read a file outside the language policy.",
+            "technique_class": "direct_capability_access",
+            "source_family": "example_source",
+            "source_kind": "sandbox_regression",
+            "variant_group": "example_variant",
             "code": "open('/tmp/canary').read()",
             "expected": {"status": "policy_rejected"},
             "provenance": {
                 "source_title": "Example",
                 "source_url": "https://example.com/source",
                 "source_locator": "Example section",
+                "source_sha256": "a" * 64,
+                "source_license": "Example license.",
                 "adaptation": "Changed the target to the canary.",
             },
             "oracle": {"kind": "canary_exposure"},
@@ -225,6 +231,10 @@ class CaseFileTest(unittest.TestCase):
             path = Path(directory) / "cases.json"
             for changes in (
                 {"provenance": None},
+                {"technique_class": "unknown"},
+                {"source_family": "Not a slug"},
+                {"source_kind": "unknown"},
+                {"variant_group": "Not a slug"},
                 {"oracle": None},
                 {"oracle": {"kind": "unknown"}},
             ):
@@ -246,8 +256,16 @@ class CaseFileTest(unittest.TestCase):
         cases, fingerprint = harness.load_cases(
             Path("benchmarks/attacks.json")
         )
-        self.assertGreaterEqual(len(cases), 10)
+        self.assertEqual(len(cases), 36)
         self.assertTrue(all(case["category"] == "attack" for case in cases))
+        self.assertEqual(
+            len({case["variant_group"] for case in cases}), 31
+        )
+        self.assertEqual(
+            len({case["technique_class"] for case in cases}), 16
+        )
+        self.assertEqual(len({case["source_family"] for case in cases}), 7)
+        self.assertEqual(len({case["source_kind"] for case in cases}), 3)
         self.assertEqual(len(fingerprint), 64)
 
 
@@ -504,6 +522,10 @@ class ContainerBoundaryTest(unittest.TestCase):
             "category": "attack",
             "description": "A test attack.",
             "attack_goal": "Read the canary.",
+            "technique_class": "direct_capability_access",
+            "source_family": "example_source",
+            "source_kind": "sandbox_regression",
+            "variant_group": "example_variant",
             "code": "open('/tmp/canary').read()",
             "expected": {"status": "policy_rejected"},
             "provenance": {},
@@ -524,6 +546,12 @@ class ContainerBoundaryTest(unittest.TestCase):
         )
         self.assertFalse(record["attack_oracle"]["attack_success"])
         self.assertEqual(record["trial"], {"index": 1, "count": 1})
+        self.assertEqual(
+            record["technique_class"], "direct_capability_access"
+        )
+        self.assertEqual(record["source_family"], "example_source")
+        self.assertEqual(record["source_kind"], "sandbox_regression")
+        self.assertEqual(record["variant_group"], "example_variant")
 
 
 if __name__ == "__main__":

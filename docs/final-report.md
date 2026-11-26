@@ -11,10 +11,12 @@ conversion, and structured rejection evidence. A Docker controller supplies an
 independent process, filesystem, network, time, and memory boundary for the
 experiments; it is not counted as part of the language policy.
 
-On 13 sourced attack cases, the prototype had zero observed attack successes:
-ten canary-disclosure attempts were rejected and three availability attempts
-were stopped by interpreter limits. This result covers only the declared cases
-and oracles. On a deterministic 30-task HumanEval adaptation, the prototype
+On 36 sourced attack cases, the prototype had zero observed attack successes:
+none of 27 disclosure attempts emitted the canary, and all nine availability
+attempts were stopped internally or rejected before outer containment
+intervened. The corpus contains 31 related variant groups across 16
+project-defined mechanism classes; this result still covers only the declared
+cases and oracles. On a deterministic 30-task HumanEval adaptation, the prototype
 matched 15/20 development tasks and 4/10 tasks whose runtime outcomes were held
 out until the implementation was frozen. On six project-authored workloads run
 20 times per executor in fresh containers, the pinned reference used 10.22
@@ -159,22 +161,33 @@ mean the image is not claimed to be byte-for-byte reproducible.
 
 ## 5. Evaluation method
 
-All final accepted experiments used image
+The accepted compatibility and performance experiments used image
 `sha256:0a803aa41de9ee8c671537c2b31237d87c291b6ed58fbc1fff5f9802f7d7f202`.
-Each executor/case pair used a fresh container.
+The expanded attack experiment used
+`sha256:128da983471829f9e0f29551a093c73b2232499e0d5cf29bd07bd220c602ca71`,
+which adds the corpus metadata validation and coverage summary without changing
+the interpreter or policy implementation. Each record retains its resolved
+image ID, and each executor/case pair used a fresh container.
 
 ### 5.1 Attack cases and independent oracles
 
-The 13-case suite adapts techniques from published sandbox discussions,
-JailCTF's Pyjailbreaker collection, and a smolagents security fix. Ten cases try
-direct access, import recovery, dynamic evaluation, object-subclass traversal,
-function-global traversal, module traversal, or higher-order attribute access.
-The controller generates a fresh random canary, places it inside the container,
-removes it from the worker environment, and scans raw output for the exact value.
-Three cases test infinite computation, output amplification, and oversized
-integer construction; success means the outer controller, rather than an
-interpreter limit, had to stop the run. Executor status labels are not attack
-oracles.
+The 36-case corpus draws from current RestrictedPython, asteval, and smolagents
+security tests; fixed JailCTF Pyjailbreaker and challenge repositories; and two
+published sandbox discussions. It contains 31 related variant groups, 16
+mechanism classes, seven source families, and three source kinds. Per-case
+metadata includes an immutable source where available, locator, inspected-source
+SHA-256, license note, and safe adaptation. The loader rejects duplicate
+payloads and inconsistent group classification.
+
+Twenty-seven cases attempt direct capability access, dynamic evaluation,
+namespace or importer recovery, object-graph and frame traversal, formatter and
+higher-order indirection, transitive modules, AST validation gaps, or name
+filter bypass. The controller creates a fresh random canary, places it inside
+the container, removes it from the worker environment, and scans raw output for
+the exact value. Nine cases exercise nontermination, recursion, output, numeric,
+collection, string, or malformed-code-object availability threats; success
+means a declared outer condition occurred. Executor status labels are not
+attack oracles. Syntax variants count as variants, not independent mechanisms.
 
 ### 5.2 Independent benign compatibility
 
@@ -208,18 +221,20 @@ reported only as diagnostics.
 
 ### 6.1 Security observations
 
-| Executor | Cases | Observed attack successes | Observed statuses |
-| --- | ---: | ---: | --- |
-| Prototype | 13 | 0 | 10 `policy_rejected`, 3 `resource_limit` |
-| Pinned reference | 13 | 2 | 11 `program_error`, 1 `wall_timeout`, 1 `oom_killed` |
+| Executor | Cases | Canary disclosures | Availability successes | Observed statuses |
+| --- | ---: | ---: | ---: | --- |
+| Prototype | 36 | 0 | 0 | 25 `policy_rejected`, 8 `resource_limit`, 3 `unsupported` |
+| Pinned reference | 36 | 0 | 6 | 30 `program_error`, 4 `oom_killed`, 2 `wall_timeout` |
 
-Neither executor emitted the canary. The two reference successes were
-availability outcomes: unbounded output reached the controller deadline and
-large integer construction reached the container memory limit. The prototype's
-internal output and integer bounds stopped both before outer containment. Zero
-observed successes means only that these payloads did not satisfy their declared
-oracles; most disclosure cases were rejected statically, and the suite does not
-cover integrity, every newly allowed method, or unknown escape techniques.
+Neither executor emitted the canary. The six reference successes were all
+availability outcomes: oversized integer power, range materialization, list
+repetition, and string repetition reached the container memory limit; unbounded
+output and an exponent tower reached the controller deadline. The prototype
+stopped all nine availability attempts internally or rejected their syntax
+before outer containment. Zero observed prototype successes means only that
+these payloads did not satisfy their declared oracles. Most capability cases
+were rejected statically, and the suite has no integrity oracle, blind attack
+partition, or claim to exhaust unknown techniques.
 
 ### 6.2 Compatibility
 
@@ -259,20 +274,22 @@ resource-constrained device.
 ## 7. Observability and validity
 
 The final accepted attack, compatibility, and performance experiments contain
-326 execution records. Every record includes case, suite, source, and resolved
+372 execution records. Every record includes case, suite, source, and resolved
 image fingerprints; executor and partition; effective limits; expected and
 observed status, value, and output; bounded runtime events with source location
 and reason; interpreter steps where available; worker and wall timing; worker
 peak memory; Docker exit and OOM state; inspection and removal attempts; and any
-controller errors. Attack records additionally contain source provenance and an
-independent oracle result.
+controller errors. Attack records additionally contain source provenance,
+source-artifact hashes, corpus grouping fields, and an independent oracle
+result.
 
 The summary command keeps expectation matches, attack-oracle successes, and
-compatibility outcomes separate. It reports distributions rather than only
-means and exposes unique image IDs, suite hashes, repetition counts, and
-per-executor case counts, flagging mixed or unbalanced inputs. All 326 accepted
-containers were inspected and removed with no retry, cleanup failure, controller
-error, or residual evaluation container.
+compatibility outcomes separate. It reports attack variants separately from
+variant groups, mechanism classes, source families, and source kinds. It also
+reports distributions rather than only means and exposes unique image IDs,
+suite hashes, repetition counts, and per-executor case counts, flagging mixed or
+unbalanced inputs. All 372 accepted containers were inspected and removed with
+no retry, cleanup failure, controller error, or residual evaluation container.
 
 This observability supports audit and diagnosis, but it does not fix sampling
 bias or missing attacks. Raw JSON Lines results are ignored by Git and remain
@@ -283,9 +300,11 @@ and machine description.
 
 ## 8. Limitations and future work
 
-- Thirteen attacks are a coverage demonstration, not an escape-rate estimate or
-  proof. Add grouped development and held-out attack families, integrity oracles,
-  and cases adjacent to newly allowed methods and comprehensions.
+- Thirty-six sourced payloads across 31 variant groups and 16 project-defined
+  classes demonstrate broader public-technique sampling, not an escape-rate
+  estimate, complete state-of-the-art denominator, or proof. Add a blind attack
+  partition, integrity oracles, and cases adjacent to newly allowed methods and
+  comprehensions.
 - The compatibility sample has only ten runtime-outcome-held-out tasks and uses
   statically extractable exact checks from canonical solutions. Evaluate larger,
   independently chosen applications and keep a larger blind partition.

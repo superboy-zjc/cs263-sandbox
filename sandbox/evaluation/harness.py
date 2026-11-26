@@ -47,9 +47,34 @@ COMPATIBILITY_PARTITIONS = frozenset({"development", "heldout"})
 ATTACK_ORACLE_KINDS = frozenset(
     {"canary_exposure", "outer_termination"}
 )
+ATTACK_SOURCE_KINDS = frozenset(
+    {"ctf_gadget", "published_security", "sandbox_regression"}
+)
+ATTACK_TECHNIQUE_CLASSES = frozenset(
+    {
+        "ast_validation_bypass",
+        "code_object_construction",
+        "direct_capability_access",
+        "dynamic_code_execution",
+        "formatter_introspection",
+        "frame_introspection",
+        "indirect_attribute_access",
+        "name_filter_bypass",
+        "namespace_recovery",
+        "object_graph_traversal",
+        "resource_ast_complexity",
+        "resource_collection_amplification",
+        "resource_nontermination",
+        "resource_numeric_amplification",
+        "resource_output_amplification",
+        "resource_recursion",
+        "transitive_module_access",
+    }
+)
 OUTER_TERMINATION_STATUSES = frozenset(
     {"crashed", "oom_killed", "protocol_limit", "wall_timeout"}
 )
+_SLUG_PATTERN = re.compile(r"[a-z0-9]+(?:_[a-z0-9]+)*")
 
 
 def _reject_constant(value: str):
@@ -91,6 +116,9 @@ def load_cases(path: Path) -> tuple[list[dict], str]:
     if type(cases) is not list or not cases or len(cases) > 1000:
         raise ValueError("Suite must contain between 1 and 1,000 cases.")
     identifiers = set()
+    attack_code_hashes = set()
+    group_classes = {}
+    family_kinds = {}
     for case in cases:
         if type(case) is not dict:
             raise ValueError("Each case must be an object.")
@@ -118,6 +146,32 @@ def load_cases(path: Path) -> tuple[list[dict], str]:
             raise ValueError(f"Missing or invalid expectation: {identifier}")
         if case["category"] == "attack":
             _validate_attack_case(case)
+            code_hash = hashlib.sha256(case["code"].encode()).hexdigest()
+            if code_hash in attack_code_hashes:
+                raise ValueError(
+                    f"Duplicate attack payload for {identifier}."
+                )
+            attack_code_hashes.add(code_hash)
+
+            variant_group = case["variant_group"]
+            technique_class = case["technique_class"]
+            previous_class = group_classes.setdefault(
+                variant_group, technique_class
+            )
+            if previous_class != technique_class:
+                raise ValueError(
+                    "Attack variant group maps to multiple technique "
+                    f"classes: {variant_group}."
+                )
+
+            source_family = case["source_family"]
+            source_kind = case["source_kind"]
+            previous_kind = family_kinds.setdefault(source_family, source_kind)
+            if previous_kind != source_kind:
+                raise ValueError(
+                    "Attack source family maps to multiple source kinds: "
+                    f"{source_family}."
+                )
         if case["category"] == "compatibility":
             _validate_compatibility_case(case)
     return cases, hashlib.sha256(payload).hexdigest()
@@ -130,11 +184,28 @@ def _validate_attack_case(case: dict) -> None:
         if type(case.get(field)) is not str or not case[field].strip():
             raise ValueError(f"Attack case {identifier} needs {field}.")
 
+    if case.get("technique_class") not in ATTACK_TECHNIQUE_CLASSES:
+        raise ValueError(
+            f"Attack case {identifier} needs a valid technique class."
+        )
+    if case.get("source_kind") not in ATTACK_SOURCE_KINDS:
+        raise ValueError(
+            f"Attack case {identifier} needs a valid source kind."
+        )
+    for field in ("source_family", "variant_group"):
+        value = case.get(field)
+        if type(value) is not str or _SLUG_PATTERN.fullmatch(value) is None:
+            raise ValueError(
+                f"Attack case {identifier} needs a valid {field}."
+            )
+
     provenance = case.get("provenance")
     required_provenance = (
         "source_title",
         "source_url",
         "source_locator",
+        "source_sha256",
+        "source_license",
         "adaptation",
     )
     if type(provenance) is not dict or any(
@@ -147,6 +218,10 @@ def _validate_attack_case(case: dict) -> None:
         )
     if re.fullmatch(r"https://[^\s]+", provenance["source_url"]) is None:
         raise ValueError(f"Attack case {identifier} needs an HTTPS source URL.")
+    if re.fullmatch(r"[0-9a-f]{64}", provenance["source_sha256"]) is None:
+        raise ValueError(
+            f"Attack case {identifier} needs a source SHA-256."
+        )
 
     oracle = case.get("oracle")
     if (
@@ -637,6 +712,10 @@ def run_case(
         "trial": {"index": trial_index, "count": trial_count},
         "description": case.get("description"),
         "attack_goal": case.get("attack_goal"),
+        "technique_class": case.get("technique_class"),
+        "source_family": case.get("source_family"),
+        "source_kind": case.get("source_kind"),
+        "variant_group": case.get("variant_group"),
         "provenance": case.get("provenance"),
         "executor": executor,
         "reference_commit": REFERENCE_COMMIT,

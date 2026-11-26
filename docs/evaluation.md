@@ -84,14 +84,16 @@ per-executor case counts. They flag mixed images, mixed suites, and unbalanced
 case counts so measurements collected under different conditions are not
 silently treated as one homogeneous experiment.
 
-Future attack evaluation needs independently observed success conditions, such
-as access to a designated test resource that is reachable within containment but
-forbidden by the language policy. This avoids letting outer isolation hide a
-missing interpreter check. Related payload variants should stay together when
-forming development and held-out splits. Record provenance, adaptations, policy
-assumptions, exclusions, and both security and compatibility outcomes.
-
-The initial implementation of this design is documented in
+The sourced attack corpus is documented in
 [attack-evaluation.md](attack-evaluation.md). It uses a fresh canary inside each
 disposable container for information-disclosure cases and external termination
-evidence for resource-exhaustion cases.
+evidence for availability cases. Each record also carries a technique class,
+related variant group, source family and kind, fixed source hash, and adaptation.
+Summaries report these composition units separately so several syntactic forms
+of one gadget do not masquerade as several independent mechanisms.
+
+The current corpus still has no blind attack partition or integrity oracle.
+Future partitions must keep related variants together. Any extension should
+continue to record provenance, policy assumptions, excluded threat-model cases,
+and the distinction between a regression expectation and an independent attack
+success condition.

@@ -18,6 +18,10 @@ def _record(
     category="benign",
     partition=None,
     matches_expected=None,
+    technique_class=None,
+    source_family=None,
+    source_kind=None,
+    variant_group=None,
 ):
     oracle = (
         None
@@ -41,6 +45,10 @@ def _record(
             else matches_expected
         ),
         "attack_oracle": oracle,
+        "technique_class": technique_class,
+        "source_family": source_family,
+        "source_kind": source_kind,
+        "variant_group": variant_group,
         "cleanup_ok": True,
         "controller_errors": [],
         "execution_wall_ms": 5.0,
@@ -85,6 +93,49 @@ def test_summarize_reports_distributions_and_cases():
         "maximum": 9.0,
     }
     assert prototype["cases"]["first"]["records"] == 3
+
+
+def test_summarize_distinguishes_attack_variants_from_groups():
+    metadata = {
+        "technique_class": "indirect_attribute_access",
+        "source_family": "smolagents_security_tests",
+        "source_kind": "sandbox_regression",
+        "variant_group": "warnings_sys_indirect",
+    }
+    report = summary.summarize(
+        [
+            _record(
+                "prototype",
+                "policy_rejected",
+                category="attack",
+                case_id="map",
+                attack_success=False,
+                **metadata,
+            ),
+            _record(
+                "prototype",
+                "policy_rejected",
+                category="attack",
+                case_id="partial",
+                attack_success=False,
+                **metadata,
+            ),
+        ]
+    )
+
+    composition = report["attack_suite_composition"]
+    assert composition["case_variants"] == 2
+    assert composition["variant_groups"] == 1
+    assert composition["technique_classes"] == 1
+    assert composition["source_families"] == 1
+    assert composition["metadata_complete"] is True
+    assert composition["by_technique_class"] == {
+        "indirect_attribute_access": {
+            "case_variants": 2,
+            "variant_groups": 1,
+            "source_families": 1,
+        }
+    }
 
 
 def test_summarize_reports_compatibility_outcomes_by_partition():

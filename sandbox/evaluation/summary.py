@@ -139,6 +139,74 @@ def _compatibility_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _attack_suite_composition(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Describe attack-corpus composition without implying a coverage rate."""
+    metadata_fields = (
+        "technique_class",
+        "source_family",
+        "source_kind",
+        "variant_group",
+    )
+    cases: dict[str, dict[str, str]] = {}
+    conflicts = set()
+    incomplete = set()
+    for record in records:
+        if record.get("category") != "attack":
+            continue
+        case_id = record["case_id"]
+        metadata = {
+            field: record.get(field)
+            for field in metadata_fields
+            if type(record.get(field)) is str
+        }
+        if len(metadata) != len(metadata_fields):
+            incomplete.add(case_id)
+            continue
+        if case_id in cases and cases[case_id] != metadata:
+            conflicts.add(case_id)
+            continue
+        cases[case_id] = metadata
+
+    by_class = {}
+    for technique_class in sorted(
+        {metadata["technique_class"] for metadata in cases.values()}
+    ):
+        selected = [
+            metadata
+            for metadata in cases.values()
+            if metadata["technique_class"] == technique_class
+        ]
+        by_class[technique_class] = {
+            "case_variants": len(selected),
+            "variant_groups": len(
+                {metadata["variant_group"] for metadata in selected}
+            ),
+            "source_families": len(
+                {metadata["source_family"] for metadata in selected}
+            ),
+        }
+
+    return {
+        "case_variants": len(cases),
+        "variant_groups": len(
+            {metadata["variant_group"] for metadata in cases.values()}
+        ),
+        "technique_classes": len(
+            {metadata["technique_class"] for metadata in cases.values()}
+        ),
+        "source_families": len(
+            {metadata["source_family"] for metadata in cases.values()}
+        ),
+        "source_kinds": len(
+            {metadata["source_kind"] for metadata in cases.values()}
+        ),
+        "metadata_complete": not incomplete and not conflicts,
+        "incomplete_case_ids": sorted(incomplete),
+        "conflicting_case_ids": sorted(conflicts),
+        "by_technique_class": by_class,
+    }
+
+
 def _input_conditions(records: list[dict[str, Any]]) -> dict[str, Any]:
     """Expose fingerprints that must agree before comparing measurements."""
     image_ids = sorted(
@@ -237,6 +305,11 @@ def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
             for record in selected
             if type(record.get("attack_oracle")) is dict
         ]
+        successful_attack_records = [
+            record
+            for record in oracle_records
+            if record["attack_oracle"].get("attack_success") is True
+        ]
         worker_times = _finite_values(
             selected, "observed", "worker_elapsed_ms"
         )
@@ -272,6 +345,20 @@ def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
                 record["attack_oracle"].get("attack_success") is True
                 for record in oracle_records
             ),
+            "affected_attack_variant_groups": sorted(
+                {
+                    record["variant_group"]
+                    for record in successful_attack_records
+                    if type(record.get("variant_group")) is str
+                }
+            ),
+            "affected_attack_technique_classes": sorted(
+                {
+                    record["technique_class"]
+                    for record in successful_attack_records
+                    if type(record.get("technique_class")) is str
+                }
+            ),
             "cleanup_failures": sum(
                 record.get("cleanup_ok") is not True for record in selected
             ),
@@ -299,5 +386,6 @@ def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "input_conditions": _input_conditions(records),
+        "attack_suite_composition": _attack_suite_composition(records),
         "executors": executors,
     }

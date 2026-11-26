@@ -1,117 +1,193 @@
-# Initial attack evaluation
+# Sourced attack-corpus evaluation
 
-This experiment adds a small, provenance-tracked attack suite to the regression
-suite. Its purpose is to validate the evaluation method and exercise several
-known Python sandbox-escape techniques. Thirteen cases are not enough to estimate
-a general escape rate or establish that the prototype is secure.
+## What this corpus can support
 
-## Threat model and cases
+The original 13 cases were enough to test the experiment machinery, but not
+enough to support a broad-coverage claim. The expanded corpus contains 36
+payload variants grouped into 31 related variant groups, 16 project-defined
+mechanism classes, seven source families, and three source kinds. The grouping
+matters: the direct, map, and partial forms of warnings.sys, for example, are
+payload variants rather than three independent escape mechanisms.
 
-Ten cases attempt to disclose a file that is present inside the disposable
-container but is not exposed by the prototype language. They cover direct file
-and module access, recovery of builtins, dynamic evaluation, subclass traversal,
-function-global traversal, module traversal, and indirect attribute access.
-Three cases exercise unbounded looping, output amplification, and oversized
-integer construction.
+The corpus supports the narrower statement that the evaluation samples a broad
+set of publicly documented Python-sandbox failure mechanisms from current
+upstream security tests, published security discussions, and CTF/pyjail
+repositories. It does not prove completeness, establish a state-of-the-art
+denominator, or estimate an unknown-attack escape rate.
 
-Every attack record in `benchmarks/attacks.json` includes a source title, HTTPS
-URL, source locator, and explanation of the adaptation. The initial sources are:
+Every attack case records:
 
-- Jessica McKellar's
-  [*Building and breaking a Python sandbox*](https://web.mit.edu/jesstess/www/pytennessee_sandbox.pdf)
-  slides, for builtin, import, file-access, and resource-exhaustion threat
-  patterns.
-- Ned Batchelder's
-  [*Eval really is dangerous*](https://nedbatchelder.com/blog/201206/eval_really_is_dangerous),
-  for `eval`, `__import__`, `catch_warnings`, and extreme-arithmetic patterns.
-- JailCTF's [Pyjailbreaker](https://github.com/jailctf/pyjailbreaker)
-  repository, for object-subclass and function-global gadget chains.
-- Hugging Face's
-  [smolagents security-fix commit `33a942e`](https://github.com/huggingface/smolagents/commit/33a942e62b6fbf6a35d41f1c735bda2d64c163d0),
-  for direct and higher-order access to a module through `warnings.sys`.
+- a controlled technique_class;
+- a variant_group used to avoid counting syntax variants as independent
+  techniques;
+- a source family and source kind;
+- an immutable URL where possible, an exact locator, and the SHA-256 of the
+  source artifact inspected;
+- the source's license status and a description of the safe adaptation; and
+- an independent canary-disclosure or outer-termination oracle.
 
-Payloads that originally executed commands or modified files were adapted to
-read only the experiment's canary. The source metadata describes each change.
+The loader rejects missing metadata, malformed source hashes, unknown source or
+technique classes, duplicate payloads, and a variant group mapped to more than
+one technique class.
+
+## Composition
+
+| Mechanism class | Payload variants | Variant groups | Source families |
+| --- | ---: | ---: | ---: |
+| AST validation bypass | 1 | 1 | 1 |
+| Code-object construction | 1 | 1 | 1 |
+| Direct capability access | 2 | 1 | 1 |
+| Dynamic code execution | 3 | 3 | 3 |
+| Formatter introspection | 1 | 1 | 1 |
+| Frame introspection | 4 | 3 | 3 |
+| Indirect attribute access | 2 | 1 | 1 |
+| Name-filter bypass | 3 | 3 | 3 |
+| Namespace recovery | 2 | 2 | 2 |
+| Object-graph traversal | 5 | 4 | 3 |
+| Collection or string amplification | 3 | 3 | 2 |
+| Nontermination | 1 | 1 | 1 |
+| Numeric amplification | 2 | 1 | 2 |
+| Output amplification | 1 | 1 | 1 |
+| Recursion exhaustion | 1 | 1 | 1 |
+| Transitive module access | 4 | 4 | 1 |
+| **Total** | **36** | **31** | **7 overall** |
+
+Twenty-seven cases attempt to disclose a fresh container-local canary. Nine
+attempt to force an outer timeout, OOM kill, crash, or protocol limit. By source
+kind, 19 variants come from sandbox security regressions, ten from published
+security discussions, and seven from CTF/pyjail sources.
+
+## Primary sources and adaptation
+
+The upstream files were inspected at fixed revisions. Source-file hashes are
+stored per case in [benchmarks/attacks.json](../benchmarks/attacks.json).
+
+| Source family | Fixed source | What it contributes |
+| --- | --- | --- |
+| RestrictedPython security tests | [9d7aeb2](https://github.com/zopefoundation/RestrictedPython/blob/9d7aeb267e598c3eb270850c223b343ca5a5d2cb/tests/test_Guards.py) | string.Formatter.get_field, forged str attribute names, generator-frame recovery, and bounded range construction. |
+| asteval security tests | [aeaad8a](https://github.com/lmfit/asteval/blob/aeaad8a2fb2af004a065b35f6e86506a88ebfb9d/tests/test_asteval.py) | compile/exec, malformed code-object construction, recursion, and exponent towers. |
+| smolagents security tests | [505b76b](https://github.com/huggingface/smolagents/blob/505b76b28d5cab580d7a4e0eaf4e8f142819e6a9/tests/test_local_python_executor.py) | sys.modules, importlib, transitive modules, higher-order getattr, traceback and current frames, BuiltinImporter, Popen, and dangerous builtins. |
+| JailCTF Pyjailbreaker | [fb998df](https://github.com/jailctf/pyjailbreaker/tree/fb998df13e3008bb3b8f34d561dddf109cbbcc08) | _wrap_close, builtin __self__, BuiltinImporter, generator frames, and runtime construction of dunder names. |
+| JailCTF challenge collection | [cc4a25f](https://github.com/jailctf/pyjail-collection/tree/cc4a25fba392c92a6679acf70f588fbd4773c13a) | A one-level AST traversal bug from llama-jail and NFKC identifier normalization from pycryptojail. |
+| McKellar sandbox talk | [*Building and breaking a Python sandbox*](https://web.mit.edu/jesstess/www/pytennessee_sandbox.pdf) | Direct file/import access and CPU, output, collection, and string resource threats. |
+| Batchelder article | [*Eval really is dangerous*](https://nedbatchelder.com/blog/201206/eval_really_is_dangerous.html) | eval/import recovery, catch_warnings, and extreme integer construction. |
+
+RestrictedPython is ZPL-2.1, asteval is MIT, and smolagents is Apache-2.0.
+The inspected JailCTF repositories did not contain a license file at the fixed
+revisions. Their payload ideas were therefore independently rewritten rather
+than copied, and the absence of a declared license is recorded in every
+affected case. Published slides and articles are also treated as attributed
+ideas rather than copied source.
+
+Command-execution payloads were changed to bounded reads of
+/tmp/cs263-evaluation-canary.txt. The Popen case uses an argv-based cat inside
+the disposable container, not a shell. Resource payloads have no external
+target.
+
+## Reviewed sources that were not counted
+
+Breadth also requires excluding mismatched evidence rather than inflating the
+case count.
+
+- Jinja2's
+  [SandboxedEnvironment tests at 5ef7011](https://github.com/pallets/jinja/blob/5ef70112a1ff19c05324ff889dd30405b1002044/tests/test_security.py)
+  cover attr filters, unsafe callables, immutable containers, and sandbox-aware
+  string formatting. Those tests depend on Jinja's template syntax, filters,
+  Undefined, and rendering object model. Porting them to ordinary Python would
+  test different semantics, so they are documented but excluded.
+- HumanEval's reliability guard is not a sandbox and its own source says so. It
+  informs the outer timeout design but does not add attack cases.
+- Interactive help sessions, source-file encoding-cookie tricks, and
+  persistent-global poisoning require an interactive byte stream or warm
+  multi-request worker. This project accepts one JSON-decoded string in a fresh
+  executor, so those cases are outside the present threat model.
+- Host-object mutation tests need an integrity oracle, while the current
+  harness has disclosure and availability oracles. They remain a concrete
+  extension rather than being mislabeled as canary attacks.
 
 ## Independent success oracles
 
-For an information-disclosure case, the controller creates 32 random bytes and
-passes their hexadecimal encoding only to a bootstrap process. The bootstrap
-writes the value to `/tmp/cs263-evaluation-canary.txt` with mode `0400`, removes
-the value from the worker environment, and replaces itself with a fresh worker
-process. The controller, which already knows the value, checks the raw worker
-stdout and stderr for it. The executor's status label is not used to decide
-whether disclosure occurred.
+For each disclosure case, the controller generates 32 random bytes and gives
+their hexadecimal encoding only to a bootstrap process. The bootstrap writes
+the value to /tmp/cs263-evaluation-canary.txt with mode 0400, removes the value
+from the worker environment, and replaces itself with the worker. The
+controller scans raw worker stdout and stderr for the exact value. Executor
+status labels do not determine disclosure.
 
-For a resource-exhaustion case, attack success means the outer controller had to
-stop the container because of a declared wall-time, memory, crash, or protocol
-limit. A normal executor exception is not automatically treated as either an
-attack success or a policy rejection.
+For availability cases, success means the declared outer controller condition
+occurred: wall timeout, OOM kill, crash, or protocol limit. A normal interpreter
+exception or internal resource_limit is not an attack success.
 
-This design keeps the canary harmless and container-local. There are no host
-mounts, credentials, or network access. The token changes for every executor and
-case execution, so a payload cannot pass by printing a value stored in the
-repository.
+There are no host mounts, credentials, or network access. Each case and
+executor receives a new token and container. The canary is harmless and local
+to the experiment.
 
 ## Reproduction
 
-From the repository root, build the pinned image and run both executors:
+    docker build -f containers/Dockerfile \
+      -t cs263-sandbox:attacks-expanded-final .
+    .venv/bin/python -m sandbox benchmark \
+      --cases benchmarks/attacks.json \
+      --image cs263-sandbox:attacks-expanded-final \
+      --output results/attacks-expanded-final-20261125.jsonl
+    .venv/bin/python -m sandbox summarize \
+      results/attacks-expanded-final-20261125.jsonl
 
-```sh
-docker build -f containers/Dockerfile -t cs263-sandbox:baseline .
-python3 -m sandbox benchmark \
-  --cases benchmarks/attacks.json \
-  --output results/attack-evaluation.jsonl
-python3 -m sandbox summarize results/attack-evaluation.jsonl
-```
+Each case runs with no network or host mount, a read-only root filesystem,
+unprivileged UID/GID, dropped capabilities, no-new-privileges, one CPU,
+256 MiB memory, an 8 MiB /tmp, and a five-second outer deadline.
 
-Each case runs in a fresh container with no network, a read-only root filesystem,
-an unprivileged user, dropped capabilities, one CPU, 256 MiB of memory, and a
-five-second wall deadline. The writable `/tmp` is a new 8 MiB `tmpfs` used only
-for the canary and ordinary temporary data.
+## Accepted result
 
-## Revalidated result
+The accepted run on 2026-11-25 used:
 
-The post-compatibility run on 2026-11-25 used attack-suite SHA-256
-`89f2cc41ca657110a6467c83cf3a2720b0cd49e05397b94c254a676922c9563d`
-and image ID
-`sha256:0a803aa41de9ee8c671537c2b31237d87c291b6ed58fbc1fff5f9802f7d7f202`.
-The accepted JSON Lines file had SHA-256
-`5ddf6428c01d58778838b91b976295e399e2b0b3d6a6e2fbc148054562548d92`.
-This run followed the addition of tuples, reviewed exact-type methods,
-comprehensions, and additional bounded builtins.
+- suite SHA-256
+  4bc85f83599e8384a52be82b4786a6d4d75e742c65f9e505d6d2c1c862eca030;
+- image ID
+  sha256:128da983471829f9e0f29551a093c73b2232499e0d5cf29bd07bd220c602ca71;
+- result-file SHA-256
+  49a5b4ba8041f477bb542997e6991d0074ca61271bef896769928dc3646c5a8c.
 
-| Executor | Cases | Observed attack successes | Outcomes | Cleanup |
-| --- | ---: | ---: | --- | ---: |
-| Prototype | 13 | 0 | 10 `policy_rejected`, 3 `resource_limit` | 13/13 |
-| Pinned reference | 13 | 2 | 11 `program_error`, 1 `wall_timeout`, 1 `oom_killed` | 13/13 |
+| Executor | Cases | Canary disclosures | Availability successes | Observed statuses |
+| --- | ---: | ---: | ---: | --- |
+| Prototype | 36 | 0 | 0 | 25 policy_rejected, 8 resource_limit, 3 unsupported |
+| Pinned reference | 36 | 0 | 6 | 30 program_error, 4 oom_killed, 2 wall_timeout |
 
-Neither executor exposed the canary in the ten information-disclosure cases. The
-two observed reference successes were availability outcomes: unbounded output
-reached the external wall deadline, and oversized integer construction exhausted
-the container memory limit. These reference results are behavioral comparisons,
-not vulnerability claims; the upstream project documents its local executor as
-[not being a security boundary](https://github.com/huggingface/smolagents/blob/main/SECURITY.md).
+The six reference availability outcomes comprised:
 
-The prototype stopped all three availability cases using its own incremental
-limits before outer containment intervened. All 26 containers were removed, and
-no controller error was recorded.
+- OOM kills for oversized integer power, range materialization, list
+  repetition, and string repetition; and
+- wall timeouts for unbounded output and the exponent tower.
+
+They affected five variant groups and three resource mechanism classes. The
+prototype stopped all nine availability attempts internally or rejected their
+syntax before outer containment intervened. Neither executor disclosed the
+canary in any of the 27 disclosure attempts.
+
+All 72 records had complete source metadata. All 72 containers were inspected
+and removed with no inspection retry, cleanup retry, cleanup failure,
+controller error, or residual evaluation container.
 
 ## Observability and interpretation
 
-Each JSON Lines record retains the source and suite hashes, resolved image ID,
-expected and observed outcomes, rejection reason and source location when
-available, bounded execution events, step and output accounting, timing, worker
-peak memory, external container state, cleanup evidence, provenance, and the
-independent oracle result. `python -m sandbox summarize` reports regression
-matches separately from observed attack successes.
+Each JSON Lines record retains the case, source, suite, and image fingerprints;
+the four corpus-grouping fields; expected and observed status; rejection reason
+and source location where available; bounded runtime events; interpreter steps;
+output, timing, and peak worker memory; Docker exit/OOM state; inspection and
+removal attempts; controller errors; and the independent oracle result.
 
-A zero in the attack-success column means only that these payloads did not meet
-their declared oracle in this environment. It does not prove the absence of file
-access through other payloads, and an information-disclosure payload that reads
-the canary without emitting it would not be detected. Static rejection also does
-not demonstrate that a corresponding runtime check would hold if more syntax
-were enabled. Future work should add independently sourced cases, group related
-variants before train/held-out splits, include benign programs that use adjacent
-language features, and repeat performance measurements before making efficiency
-claims.
+The summarizer reports case variants separately from variant groups, mechanism
+classes, source families, and source kinds. It also reports which groups and
+classes had an observed success, while keeping expectation matches distinct
+from security oracles. Mixed images, mixed suites, and unbalanced case counts
+remain visible.
+
+Zero observed prototype successes means only that these 36 payloads did not
+meet their declared oracles under these conditions. Twenty-five cases were
+rejected statically and three used unsupported syntax, so the result does not
+show that every corresponding runtime guard would hold if the language were
+expanded. The suite has no blind held-out attack partition, integrity oracle,
+network oracle, side-channel oracle, native-extension case, or proof that its
+16 project-defined classes exhaust Python sandbox attacks. The defensible claim
+is broad, sourced mechanism sampling with auditable outcomes—not proof of
+security or complete state-of-the-art coverage.

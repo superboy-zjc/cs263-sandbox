@@ -1,16 +1,25 @@
 {
   "schema_version": 1,
   "date": "2026-11-25",
-  "image_id": "sha256:0a803aa41de9ee8c671537c2b31237d87c291b6ed58fbc1fff5f9802f7d7f202",
+  "image_ids": {
+    "compatibility_and_performance": "sha256:0a803aa41de9ee8c671537c2b31237d87c291b6ed58fbc1fff5f9802f7d7f202",
+    "expanded_attack_corpus": "sha256:128da983471829f9e0f29551a093c73b2232499e0d5cf29bd07bd220c602ca71"
+  },
   "accepted_runs": [
     {
       "experiment": "attack",
-      "local_result_file": "results/attacks-final2-20261125.jsonl",
-      "result_sha256": "5ddf6428c01d58778838b91b976295e399e2b0b3d6a6e2fbc148054562548d92",
-      "suite_sha256": "89f2cc41ca657110a6467c83cf3a2720b0cd49e05397b94c254a676922c9563d",
-      "records": 26,
+      "image_id": "sha256:128da983471829f9e0f29551a093c73b2232499e0d5cf29bd07bd220c602ca71",
+      "local_result_file": "results/attacks-expanded-final-20261125.jsonl",
+      "result_sha256": "49a5b4ba8041f477bb542997e6991d0074ca61271bef896769928dc3646c5a8c",
+      "suite_sha256": "4bc85f83599e8384a52be82b4786a6d4d75e742c65f9e505d6d2c1c862eca030",
+      "records": 72,
+      "case_variants": 36,
+      "variant_groups": 31,
+      "technique_classes": 16,
+      "source_families": 7,
       "prototype_observed_attack_successes": 0,
-      "reference_observed_attack_successes": 2
+      "reference_observed_attack_successes": 6,
+      "observed_canary_disclosures": 0
     },
     {
       "experiment": "humaneval_development",
@@ -41,9 +50,9 @@
     }
   ],
   "totals": {
-    "records": 326,
-    "containers_inspected": 326,
-    "containers_removed": 326,
+    "records": 372,
+    "containers_inspected": 372,
+    "containers_removed": 372,
     "inspection_retries": 0,
     "cleanup_retries": 0,
     "cleanup_failures": 0,
