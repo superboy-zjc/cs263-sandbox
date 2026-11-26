@@ -52,11 +52,23 @@ high-water resident memory from Linux `getrusage`, including imports. It is not
 an aggregate memory measurement of the entire container and is sampled before
 the final JSON response is encoded.
 
-These are single-run smoke measurements, not performance estimates. Repeated
-trials, warm execution, representative workloads, and ARM-device measurements
-remain future evaluation work. Because the image includes the reference's
+These are single-run smoke measurements, not performance estimates. Warm
+execution, independently sourced performance workloads, and ARM-device
+measurements remain future work. Because the image includes the reference's
 dependencies, its size is not a measurement of the standalone prototype's
 deployment footprint.
+
+The initial repeated cold-execution experiment is documented in
+[performance-evaluation.md](performance-evaluation.md). It uses representative
+project-authored workloads and reports medians and nearest-rank P95 values.
+Warm execution, broader workload sources, and target-device measurements remain
+future work.
+
+The independent benign-compatibility experiment is documented in
+[compatibility-evaluation.md](compatibility-evaluation.md). It uses a
+deterministic 30-task HumanEval sample with a 20-task development partition and
+a frozen 10-task held-out partition. Compatibility misses are measurements and
+are summarized separately from regression failures and attack oracles.
 
 ## Observability and limitations
 
@@ -66,6 +78,11 @@ execution, reviewed builtin iteration, formatting, and result traversal; they
 are not directly comparable with the reference's AST counter. The adapter emits
 only its own phases and reports reference steps as unavailable. It does not
 invent policy traces for the upstream executor.
+
+Summaries expose the unique image IDs, suite hashes, repetition counts, and
+per-executor case counts. They flag mixed images, mixed suites, and unbalanced
+case counts so measurements collected under different conditions are not
+silently treated as one homogeneous experiment.
 
 Future attack evaluation needs independently observed success conditions, such
 as access to a designated test resource that is reachable within containment but

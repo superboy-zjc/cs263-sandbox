@@ -49,6 +49,68 @@ class CaseFileTest(unittest.TestCase):
         self.assertGreaterEqual(len(cases), 10)
         self.assertEqual(len(fingerprint), 64)
 
+    def test_performance_suite_loads(self):
+        cases, fingerprint = harness.load_cases(
+            Path("benchmarks/performance.json")
+        )
+        self.assertGreaterEqual(len(cases), 5)
+        self.assertTrue(all(case["category"] == "benign" for case in cases))
+        self.assertEqual(len(fingerprint), 64)
+
+    def test_humaneval_compatibility_suite_loads(self):
+        cases, fingerprint = harness.load_cases(
+            Path("benchmarks/humaneval.json")
+        )
+        self.assertEqual(len(cases), 30)
+        self.assertEqual(
+            sum(case["partition"] == "development" for case in cases), 20
+        )
+        self.assertEqual(
+            sum(case["partition"] == "heldout" for case in cases), 10
+        )
+        self.assertTrue(
+            all(case["category"] == "compatibility" for case in cases)
+        )
+        self.assertEqual(len(fingerprint), 64)
+
+    def test_compatibility_cases_require_reproducible_metadata(self):
+        compatibility = {
+            "id": "external",
+            "category": "compatibility",
+            "partition": "development",
+            "description": "An external benign program.",
+            "code": "1",
+            "expected": {"status": "ok", "value": 1},
+            "provenance": {
+                "source_title": "Example",
+                "source_url": "https://example.com/data",
+                "source_locator": "case 1",
+                "dataset_sha256": "a" * 64,
+                "adaptation": "No adaptation.",
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "cases.json"
+            for changes in (
+                {"partition": "test"},
+                {"description": ""},
+                {"provenance": None},
+                {"expected": {"status": "unsupported"}},
+            ):
+                path.write_text(
+                    json.dumps(
+                        {
+                            "schema_version": 1,
+                            "cases": [compatibility | changes],
+                        }
+                    )
+                )
+                with (
+                    self.subTest(changes=changes),
+                    self.assertRaises(ValueError),
+                ):
+                    harness.load_cases(path)
+
     def test_duplicate_ids_are_rejected(self):
         case = {
             "id": "duplicate",
@@ -122,6 +184,26 @@ class CaseFileTest(unittest.TestCase):
         for value in (0, -1, float("nan"), float("inf")):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 harness.Settings(wall_seconds=value)
+
+    def test_invalid_trial_metadata_is_rejected(self):
+        case = {
+            "id": "test",
+            "category": "benign",
+            "code": "1",
+            "expected": {"status": "ok", "value": 1},
+        }
+        for index, count in ((0, 1), (2, 1), (1, 0), (True, 1)):
+            with self.subTest(index=index, count=count):
+                with self.assertRaisesRegex(ValueError, "trial"):
+                    harness.run_case(
+                        case,
+                        "prototype",
+                        "sha256:example",
+                        harness.Settings(),
+                        "suite",
+                        trial_index=index,
+                        trial_count=count,
+                    )
 
     def test_attack_cases_require_provenance_and_oracle(self):
         attack = {
@@ -258,6 +340,7 @@ class ContainerBoundaryTest(unittest.TestCase):
         self.assertFalse(record["matches_expected"])
         self.assertTrue(record["cleanup_ok"])
         self.assertEqual(record["controller_errors"], [])
+        self.assertIsNone(record["partition"])
 
     @mock.patch("sandbox.evaluation.harness.subprocess.run")
     @mock.patch("sandbox.evaluation.harness._inspect_container")
@@ -288,8 +371,95 @@ class ContainerBoundaryTest(unittest.TestCase):
         self.assertTrue(record["matches_expected"])
         self.assertFalse(record["cleanup_ok"])
         self.assertEqual(
-            record["controller_errors"], ["remove: TimeoutExpired"]
+            record["controller_errors"],
+            ["remove: cleanup failed after 3 attempts."],
         )
+        self.assertEqual(record["cleanup"]["attempts"], 3)
+        self.assertEqual(len(record["cleanup"]["diagnostics"]), 3)
+
+    @mock.patch("sandbox.evaluation.harness.subprocess.run")
+    @mock.patch("sandbox.evaluation.harness._inspect_container")
+    @mock.patch("sandbox.evaluation.harness._exchange")
+    def test_transient_cleanup_failure_is_retried(
+        self, exchange, inspect, run
+    ):
+        observed = {
+            "status": "ok",
+            "value": 1,
+            "stdout": "",
+            "events": [],
+            "steps": 1,
+            "error": None,
+        }
+        exchange.return_value = (0, json.dumps(observed).encode(), b"", None)
+        inspect.return_value = {"oom_killed": False, "exit_code": 0}
+        run.side_effect = [
+            subprocess.CompletedProcess([], 1, stderr=b"removal in progress"),
+            subprocess.CompletedProcess([], 0),
+        ]
+        case = {
+            "id": "test",
+            "category": "benign",
+            "code": "1",
+            "expected": {"status": "ok", "value": 1},
+        }
+
+        record = harness.run_case(
+            case, "prototype", "sha256:example", harness.Settings(), "suite"
+        )
+
+        self.assertTrue(record["cleanup_ok"])
+        self.assertEqual(record["cleanup"]["attempts"], 2)
+        self.assertEqual(
+            record["cleanup"]["diagnostics"],
+            [
+                {
+                    "attempt": 1,
+                    "returncode": 1,
+                    "error": "removal in progress",
+                }
+            ],
+        )
+        self.assertEqual(record["controller_errors"], [])
+
+    @mock.patch("sandbox.evaluation.harness.subprocess.run")
+    @mock.patch("sandbox.evaluation.harness._inspect_container")
+    @mock.patch("sandbox.evaluation.harness._exchange")
+    def test_transient_inspection_failure_is_retried(
+        self, exchange, inspect, run
+    ):
+        observed = {
+            "status": "ok",
+            "value": 1,
+            "stdout": "",
+            "events": [],
+            "steps": 1,
+            "error": None,
+        }
+        exchange.return_value = (0, json.dumps(observed).encode(), b"", None)
+        inspect.side_effect = [
+            RuntimeError("transient"),
+            {"oom_killed": False, "exit_code": 0, "running": False},
+        ]
+        run.return_value = subprocess.CompletedProcess([], 0)
+        case = {
+            "id": "test",
+            "category": "benign",
+            "code": "1",
+            "expected": {"status": "ok", "value": 1},
+        }
+
+        record = harness.run_case(
+            case, "prototype", "sha256:example", harness.Settings(), "suite"
+        )
+
+        self.assertTrue(record["inspection"]["ok"])
+        self.assertEqual(record["inspection"]["attempts"], 2)
+        self.assertEqual(
+            record["inspection"]["diagnostics"],
+            [{"attempt": 1, "error": "RuntimeError"}],
+        )
+        self.assertEqual(record["controller_errors"], [])
 
     @mock.patch("sandbox.evaluation.harness.subprocess.run")
     @mock.patch("sandbox.evaluation.harness._inspect_container")
@@ -353,6 +523,7 @@ class ContainerBoundaryTest(unittest.TestCase):
             )
         )
         self.assertFalse(record["attack_oracle"]["attack_success"])
+        self.assertEqual(record["trial"], {"index": 1, "count": 1})
 
 
 if __name__ == "__main__":

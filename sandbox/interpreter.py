@@ -40,9 +40,35 @@ class _Function:
     local_names: set[str]
 
 
+@dataclass(frozen=True)
+class _Method:
+    owner: Any
+    name: str
+
+
 _BUILTINS = {
     name: _Builtin(name)
-    for name in ("len", "range", "sum", "abs", "min", "max", "print")
+    for name in (
+        "abs",
+        "enumerate",
+        "int",
+        "isinstance",
+        "len",
+        "list",
+        "map",
+        "max",
+        "min",
+        "print",
+        "range",
+        "sorted",
+        "str",
+        "sum",
+    )
+}
+_METHODS_BY_TYPE = {
+    list: frozenset({"append", "clear", "index", "remove"}),
+    str: frozenset({"index", "join", "lower", "split", "startswith"}),
+    tuple: frozenset({"index"}),
 }
 _NUMERIC = (bool, int, float)
 _MAX_EVENTS = 128
@@ -159,7 +185,7 @@ class Interpreter:
         if check_primitive(value, self.limits, node or self.current_node):
             return value
         if (
-            value_type in (list, dict, range)
+            value_type in (list, tuple, dict, range)
             and len(value) > self.limits.max_collection_items
         ):
             self.stop("resource_limit", "Collection size limit exceeded", node)
@@ -170,6 +196,7 @@ class Interpreter:
             float,
             str,
             list,
+            tuple,
             dict,
             range,
             _Builtin,
@@ -210,7 +237,7 @@ class Interpreter:
         if isinstance(node.slice, ast.Slice):
             index = self.read_slice(node.slice, scope)
 
-            if type(container) not in (list, str):
+            if type(container) not in (list, tuple, str):
                 raise TypeError(
                     "Slice reads support only lists and strings"
                 )
@@ -221,7 +248,7 @@ class Interpreter:
 
             maximum = (
                 self.limits.max_collection_items
-                if type(container) is list
+                if type(container) in (list, tuple)
                 else self.limits.max_source_bytes
             )
             if size > maximum:
@@ -235,7 +262,7 @@ class Interpreter:
 
         # Preserve ordinary indexing.
         index = self.evaluate(node.slice, scope)
-        if type(container) not in (list, dict, str, range):
+        if type(container) not in (list, tuple, dict, str, range):
             raise TypeError("Value does not support indexing")
         if type(container) is dict:
             self.check_key(index)
@@ -251,6 +278,14 @@ class Interpreter:
         self.checked(value)
         if isinstance(node, ast.Name):
             scope.set(node.id, value)
+            return
+        if isinstance(node, ast.Tuple):
+            if type(value) not in (list, tuple):
+                raise TypeError("Unpacking requires a list or tuple")
+            if len(node.elts) != len(value):
+                raise ValueError("Incorrect number of values to unpack")
+            for target, item in zip(node.elts, value):
+                self.store(target, item, scope)
             return
         container = self.evaluate(node.value, scope)
         index = self.evaluate(node.slice, scope)
@@ -274,25 +309,25 @@ class Interpreter:
 
     def binary(self, op: ast.operator, left: Any, right: Any) -> Any:
         lt, rt = type(left), type(right)
-        if isinstance(op, ast.Add) and lt is rt and lt in (list, str):
+        if isinstance(op, ast.Add) and lt is rt and lt in (list, tuple, str):
             maximum = (
                 self.limits.max_collection_items
-                if lt is list
+                if lt in (list, tuple)
                 else self.limits.max_source_bytes
             )
             if len(left) + len(right) > maximum:
                 self.stop("resource_limit", "Sequence size limit exceeded")
             return left + right
         if isinstance(op, ast.Mult) and (
-            (lt in (list, str) and rt in (int, bool))
-            or (rt in (list, str) and lt in (int, bool))
+            (lt in (list, tuple, str) and rt in (int, bool))
+            or (rt in (list, tuple, str) and lt in (int, bool))
         ):
             sequence, repeat = (
                 (left, right) if lt in (list, str) else (right, left)
             )
             maximum = (
                 self.limits.max_collection_items
-                if type(sequence) is list
+                if type(sequence) in (list, tuple)
                 else self.limits.max_source_bytes
             )
             if len(sequence) * max(0, repeat) > maximum:
@@ -353,7 +388,7 @@ class Interpreter:
                 if type(left) not in (bool, int, float, str, type(None)):
                     raise TypeError("Unsupported membership value")
                 result = left in right
-            elif type(right) is list:
+            elif type(right) in (list, tuple):
                 result = any(
                     self.compare(ast.Eq(), left, item) for item in right
                 )
@@ -373,6 +408,47 @@ class Interpreter:
         }
         return operations[type(op)](plain_left, plain_right)
 
+    def comprehension(
+        self,
+        element: ast.expr,
+        generators: list[ast.comprehension],
+        scope: Environment,
+    ) -> list[Any]:
+        """Evaluate a bounded synchronous comprehension into a plain list."""
+        result = []
+        comprehension_scope = Environment(parent=scope)
+
+        def visit_generator(index: int) -> None:
+            generator = generators[index]
+            values = self.iterable(
+                self.evaluate(generator.iter, comprehension_scope)
+            )
+            for value in values:
+                self.tick(generator)
+                self.store(generator.target, value, comprehension_scope)
+                if not all(
+                    self.evaluate(condition, comprehension_scope)
+                    for condition in generator.ifs
+                ):
+                    continue
+                if index + 1 < len(generators):
+                    visit_generator(index + 1)
+                    continue
+                if len(result) >= self.limits.max_collection_items:
+                    self.stop(
+                        "resource_limit",
+                        "Collection size limit exceeded",
+                        element,
+                    )
+                result.append(
+                    self.checked(
+                        self.evaluate(element, comprehension_scope)
+                    )
+                )
+
+        visit_generator(0)
+        return result
+
     def evaluate(self, node: ast.AST, scope: Environment) -> Any:
         self.tick(node)
         if isinstance(node, ast.Constant):
@@ -383,6 +459,10 @@ class Interpreter:
             if len(node.elts) > self.limits.max_collection_items:
                 self.stop("resource_limit", "Collection size limit exceeded")
             return [self.evaluate(item, scope) for item in node.elts]
+        if isinstance(node, ast.Tuple):
+            if len(node.elts) > self.limits.max_collection_items:
+                self.stop("resource_limit", "Collection size limit exceeded")
+            return tuple(self.evaluate(item, scope) for item in node.elts)
         if isinstance(node, ast.Dict):
             result = {}
             for key_node, value_node in zip(node.keys, node.values):
@@ -400,6 +480,18 @@ class Interpreter:
             return result
         if isinstance(node, ast.Subscript):
             return self.read_subscript(node, scope)
+        if isinstance(node, ast.Attribute):
+            owner = self.evaluate(node.value, scope)
+            methods = _METHODS_BY_TYPE.get(type(owner), frozenset())
+            if node.attr not in methods:
+                self.stop(
+                    "policy_rejected",
+                    "Method is not approved for this value type",
+                    node,
+                )
+            return _Method(owner, node.attr)
+        if isinstance(node, (ast.ListComp, ast.GeneratorExp)):
+            return self.comprehension(node.elt, node.generators, scope)
         if isinstance(node, ast.BinOp):
             return self.binary(
                 node.op,
@@ -442,25 +534,37 @@ class Interpreter:
         if isinstance(node, ast.Call):
             function = self.evaluate(node.func, scope)
             args = [self.evaluate(arg, scope) for arg in node.args]
-            if (
-                type(function) is _Builtin
-                and _BUILTINS.get(function.name) is function
-            ):
-                self.event(
-                    node, f"call:{function.name}", "allowed", "Reviewed builtin"
-                )
-                return self.builtin(function.name, args)
-            if type(function) is _Function:
-                self.event(
-                    node, "call:function", "allowed", "Interpreted function"
-                )
-                return self.call(function, args)
-            self.stop(
-                "policy_rejected",
-                "Call target is not an approved function",
-                node,
-            )
+            return self.invoke(function, args, node)
         self.stop("internal_error", "Unexpected expression node", node)
+
+    def invoke(
+        self, function: Any, args: list[Any], node: ast.AST | None
+    ) -> Any:
+        """Invoke only canonical builtins, interpreted functions, or methods."""
+        if (
+            type(function) is _Builtin
+            and _BUILTINS.get(function.name) is function
+        ):
+            self.event(
+                node, f"call:{function.name}", "allowed", "Reviewed builtin"
+            )
+            return self.builtin(function.name, args)
+        if type(function) is _Function:
+            self.event(
+                node, "call:function", "allowed", "Interpreted function"
+            )
+            return self.call(function, args)
+        if type(function) is _Method:
+            self.event(
+                node,
+                f"call:method:{function.name}",
+                "allowed",
+                "Reviewed exact-type method",
+            )
+            return self.method(function, args, node)
+        self.stop(
+            "policy_rejected", "Call target is not an approved function", node
+        )
 
     def local_names(self, definition: ast.FunctionDef) -> set[str]:
         names = {
@@ -472,6 +576,11 @@ class Interpreter:
             child = pending.pop()
             if isinstance(child, ast.FunctionDef):
                 names.add(child.name)
+                continue
+            if isinstance(child, (ast.ListComp, ast.GeneratorExp)):
+                # Comprehension targets live in their own scope in Python 3.
+                # Named expressions are unsupported, so no function-local
+                # binding can be hidden inside these subtrees.
                 continue
             if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store):
                 names.add(child.id)
@@ -600,11 +709,93 @@ class Interpreter:
         return None
 
     def iterable(self, value: Any):
-        if type(value) not in (list, dict, str, range):
+        if type(value) not in (list, tuple, dict, str, range):
             raise TypeError(
-                "Only lists, dictionaries, strings, and ranges are iterable"
+                "Only lists, tuples, dictionaries, strings, and ranges are "
+                "iterable"
             )
         return iter(value)
+
+    def method(
+        self, method: _Method, args: list[Any], node: ast.AST | None
+    ) -> Any:
+        """Apply an allowlisted operation without exposing a bound method."""
+        owner = method.owner
+        name = method.name
+        if type(owner) is list and name == "append":
+            if len(args) != 1:
+                raise TypeError("list.append expects one argument")
+            if len(owner) >= self.limits.max_collection_items:
+                self.stop("resource_limit", "Collection size limit exceeded")
+            owner.append(self.checked(args[0]))
+            return None
+        if type(owner) is list and name == "clear":
+            if args:
+                raise TypeError("list.clear expects no arguments")
+            owner.clear()
+            return None
+        if type(owner) is list and name == "remove":
+            if len(args) != 1:
+                raise TypeError("list.remove expects one argument")
+            for index, item in enumerate(owner):
+                self.tick(node)
+                if self.compare(ast.Eq(), item, args[0]):
+                    del owner[index]
+                    return None
+            raise ValueError("list.remove value is absent")
+        if type(owner) in (list, tuple, str) and name == "index":
+            if len(args) != 1:
+                raise TypeError("index expects one argument")
+            if type(owner) is str:
+                if type(args[0]) is not str:
+                    raise TypeError("str.index expects a string")
+                return self.checked(owner.index(args[0]))
+            for index, item in enumerate(owner):
+                self.tick(node)
+                if self.compare(ast.Eq(), item, args[0]):
+                    return self.checked(index)
+            raise ValueError("index value is absent")
+        if type(owner) is str and name == "lower":
+            if args:
+                raise TypeError("str.lower expects no arguments")
+            return self.checked(owner.lower())
+        if type(owner) is str and name == "startswith":
+            if len(args) != 1 or type(args[0]) is not str:
+                raise TypeError("str.startswith expects one string")
+            return owner.startswith(args[0])
+        if type(owner) is str and name == "split":
+            if len(args) > 1 or (
+                args and type(args[0]) is not str
+            ):
+                raise TypeError("str.split expects at most one string")
+            if args and not args[0]:
+                raise ValueError("empty separator")
+            upper_bound = (
+                sum(
+                    1
+                    for index, character in enumerate(owner)
+                    if not character.isspace()
+                    and (index == 0 or owner[index - 1].isspace())
+                )
+                if not args
+                else owner.count(args[0]) + 1
+            )
+            if upper_bound > self.limits.max_collection_items:
+                self.stop("resource_limit", "Collection size limit exceeded")
+            result = owner.split(*args)
+            return [self.checked(value) for value in result]
+        if type(owner) is str and name == "join":
+            if len(args) != 1:
+                raise TypeError("str.join expects one iterable")
+            values = list(self.iterable(args[0]))
+            if any(type(value) is not str for value in values):
+                raise TypeError("str.join items must be strings")
+            size = sum(len(value) for value in values)
+            size += len(owner) * max(0, len(values) - 1)
+            if size > self.limits.max_source_bytes:
+                self.stop("resource_limit", "String size limit exceeded")
+            return self.checked(owner.join(values))
+        self.stop("internal_error", "Unexpected reviewed method", node)
 
     def builtin(self, name: str, args: list[Any]) -> Any:
         if name == "print":
@@ -615,6 +806,87 @@ class Interpreter:
                 self.print_value(value, nested=False, seen=set(), depth=0)
             self.write("\n")
             return None
+        if name in ("int", "str"):
+            if len(args) != 1:
+                raise TypeError(f"{name} expects one argument")
+            value = args[0]
+            if type(value) not in (bool, int, float, str):
+                raise TypeError(f"{name} conversion requires a scalar")
+            if name == "str":
+                return self.checked(str(value))
+            if type(value) is str and len(value) > self.limits.max_int_bits:
+                self.stop(
+                    "resource_limit", "Integer conversion input is too large"
+                )
+            return self.checked(int(value))
+        if name == "isinstance":
+            if len(args) != 2:
+                raise TypeError("isinstance expects two arguments")
+            expected_type = args[1]
+            if expected_type is _BUILTINS["int"]:
+                return type(args[0]) in (bool, int)
+            if expected_type is _BUILTINS["str"]:
+                return type(args[0]) is str
+            if expected_type is _BUILTINS["list"]:
+                return type(args[0]) is list
+            raise TypeError("isinstance type is not reviewed")
+        if name == "list":
+            if len(args) != 1:
+                raise TypeError("list expects one iterable")
+            result = list(self.iterable(args[0]))
+            if len(result) > self.limits.max_collection_items:
+                self.stop("resource_limit", "Collection size limit exceeded")
+            return result
+        if name == "enumerate":
+            if not 1 <= len(args) <= 2:
+                raise TypeError("enumerate expects one or two arguments")
+            start = args[1] if len(args) == 2 else 0
+            if type(start) not in (bool, int):
+                raise TypeError("enumerate start must be an integer")
+            result = []
+            for offset, value in enumerate(self.iterable(args[0])):
+                self.tick()
+                if len(result) >= self.limits.max_collection_items:
+                    self.stop(
+                        "resource_limit", "Collection size limit exceeded"
+                    )
+                result.append((self.checked(start + offset), value))
+            return result
+        if name == "map":
+            if len(args) != 2:
+                raise TypeError("map expects a function and one iterable")
+            function, values = args
+            result = []
+            for value in self.iterable(values):
+                self.tick()
+                if len(result) >= self.limits.max_collection_items:
+                    self.stop(
+                        "resource_limit", "Collection size limit exceeded"
+                    )
+                result.append(
+                    self.checked(
+                        self.invoke(function, [value], self.current_node)
+                    )
+                )
+            return result
+        if name == "sorted":
+            if len(args) != 1:
+                raise TypeError("sorted expects one iterable")
+            result = []
+            for value in self.iterable(args[0]):
+                self.tick()
+                if len(result) >= self.limits.max_collection_items:
+                    self.stop(
+                        "resource_limit", "Collection size limit exceeded"
+                    )
+                insert_at = len(result)
+                for index, existing in enumerate(result):
+                    self.tick()
+                    if self.compare(ast.Lt(), value, existing):
+                        insert_at = index
+                        break
+                result.insert(insert_at, value)
+            return result
         if name == "range":
             if not 1 <= len(args) <= 3 or any(
                 type(arg) not in (int, bool) for arg in args
@@ -718,13 +990,24 @@ class Interpreter:
                 )
             self.write(f"range({value.start}, {value.stop}, {value.step})")
             return
-        if type(value) not in (list, dict):
+        if type(value) not in (list, tuple, dict):
             self.stop("policy_rejected", "Only data values may be printed")
         if id(value) in seen:
-            self.write("[...]" if type(value) is list else "{...}")
+            if type(value) is dict:
+                self.write("{...}")
+            elif type(value) is tuple:
+                self.write("(...)")
+            else:
+                self.write("[...]")
             return
         seen.add(id(value))
-        self.write("[" if type(value) is list else "{")
+        if type(value) is dict:
+            opening, closing = "{", "}"
+        elif type(value) is tuple:
+            opening, closing = "(", ")"
+        else:
+            opening, closing = "[", "]"
+        self.write(opening)
         entries = value.items() if type(value) is dict else enumerate(value)
         for index, (key, item) in enumerate(entries):
             if index:
@@ -733,7 +1016,9 @@ class Interpreter:
                 self.print_value(key, nested=True, seen=seen, depth=depth + 1)
                 self.write(": ")
             self.print_value(item, nested=True, seen=seen, depth=depth + 1)
-        self.write("]" if type(value) is list else "}")
+        if type(value) is tuple and len(value) == 1:
+            self.write(",")
+        self.write(closing)
         seen.remove(id(value))
 
     def plain(self, value: Any, *, for_comparison: bool = False) -> Any:
@@ -757,7 +1042,7 @@ class Interpreter:
                 return self.checked(item)
             if for_comparison and type(item) is range:
                 return item
-            if type(item) not in (list, dict, range):
+            if type(item) not in (list, tuple, dict, range):
                 self.stop("policy_rejected", "Only plain data may be returned")
             if id(item) in seen:
                 self.stop("policy_rejected", "Cyclic data cannot be returned")

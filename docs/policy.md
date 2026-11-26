@@ -1,4 +1,4 @@
-# Initial execution policy
+# Prototype execution policy
 
 This policy defines the intended behavior of the first AST interpreter prototype
 and its comparison with other executors. It is an experimental restriction policy,
@@ -22,14 +22,21 @@ AST and apply the same runtime checks. Runtime errors remain exceptions through
 
 ## Supported programs and results
 
-The initial subset includes integers, booleans, strings, `None`, lists,
-dictionaries, arithmetic and comparison operators, variable assignments,
-subscript reads and assignments, conditionals, bounded loops using `range`, and
-user-defined functions with ordinary positional arguments and `return`.
-Reviewed builtins are `len`, `range`, `sum`, `abs`, `min`, `max`, and `print`.
-Other syntax must fail explicitly instead of being passed to Python's `eval`,
-`exec`, or `compile` for execution. Imports, classes, context managers, and
-comprehensions are outside this initial subset. All attribute access is denied.
+The subset includes integers, booleans, strings, `None`, lists, tuples,
+dictionaries, arithmetic and comparison operators, variable and subscript
+assignment, tuple unpacking, conditionals, loops, list and generator
+comprehensions, and user-defined functions with ordinary positional arguments
+and `return`. Reviewed builtins are `abs`, `enumerate`, `int`, `isinstance`,
+`len`, `list`, `map`, `max`, `min`, `print`, `range`, `sorted`, `str`, and
+`sum`. Other syntax fails explicitly instead of being passed to Python's
+`eval`, `exec`, or `compile` for execution. Imports, classes, context managers,
+lambda expressions, arbitrary keyword arguments, and exception handling remain
+outside the subset.
+
+Generator expressions use the same bounded implementation as list
+comprehensions and are materialized immediately. They are accepted for
+compatibility with consumers such as `sum`, but they do not implement Python's
+lazy, single-consumption generator-object semantics.
 
 The last top-level expression supplies the execution result; a program ending
 with a statement supplies `None`. This convenience does not change function
@@ -37,7 +44,9 @@ semantics: only `return` supplies a function result, and falling off the end of 
 function returns `None`, even when its final statement is an expression. Printed
 text is captured separately from the result.
 
-Lists and strings support slicing to retrieve a portion of their contents. A slice has three optional parameters: start, stop, and step. Each can be an integer or None. Negative indices count from the end of the sequence, while a negative step traverses it in reverse. A step of zero is invalid.
+Lists, tuples, and strings support bounded slice reads. Slice bounds and steps
+must be integers or `None`; negative indices and steps follow Python behavior,
+and a zero step is a program error. Slice assignment remains unsupported.
 
 ## Runtime checks and state
 
@@ -46,8 +55,13 @@ Calling an alias of a reviewed builtin is permitted; merely giving an unreviewed
 callable an allowed-looking name does not grant permission. The interpreter may
 call only its own user-function representation and explicitly reviewed builtin
 wrappers. Names beginning with `_`, including `_operations_count`, are reserved
-and rejected for both reads and writes. Imports, reflection, dynamic evaluation,
-and attribute access are rejected explicitly. Blocked names supplement the
+and rejected for both reads and writes. Imports, reflection, and dynamic
+evaluation are rejected explicitly. Attribute syntax is accepted only when it
+is the direct target of a call using a reviewed method name. Runtime dispatch
+then requires an exact built-in list, tuple, or string value and returns an
+internal method token rather than a Python bound method. Reviewed methods
+include bounded list mutation and lookup plus selected string lookup, splitting,
+joining, case conversion, and prefix checks. Blocked names supplement the
 default-deny callable policy rather than serving as the security boundary.
 
 Each run receives a fresh environment, output buffer, and trusted budget state.
@@ -67,6 +81,9 @@ The initial comparison uses these proposed limits consistently across runs:
 | Captured output | 4,096 characters | Check output length while appending; never retain output beyond the limit. |
 | Collection or range length | 1,000 items | Check construction and growth before allocation or mutation. |
 | Integer size | 4,096 bits | Check integer operands and results; reject oversized powers before computing them. |
+| Source text | 32,768 bytes | Bound input source, created strings, and string slices. |
+| AST structure | 4,096 nodes, depth 64 | Reject large or deeply nested syntax before execution. |
+| Function calls | Depth 32 | Stop recursive interpreted calls at a private depth limit. |
 
 Step counting alone does not bound expensive individual host operations. Reviewed
 wrappers and operators need size checks before work that could allocate large

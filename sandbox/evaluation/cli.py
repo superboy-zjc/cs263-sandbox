@@ -10,6 +10,17 @@ import sys
 from sandbox.evaluation import harness, summary
 
 
+def _repetition_count(value: str) -> int:
+    """Parse a bounded number of fresh-container repetitions."""
+    try:
+        count = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be an integer") from error
+    if count < 1 or count > 100:
+        raise argparse.ArgumentTypeError("must be between 1 and 100")
+    return count
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run a smoke suite and write one JSON Lines record per execution."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -20,11 +31,20 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--case", action="append", dest="case_ids")
     parser.add_argument(
+        "--partition", choices=sorted(harness.COMPATIBILITY_PARTITIONS)
+    )
+    parser.add_argument(
         "--executor", action="append", choices=["prototype", "reference"]
     )
     parser.add_argument("--image", default="cs263-sandbox:baseline")
     parser.add_argument("--wall-seconds", type=float, default=5.0)
     parser.add_argument("--memory-mib", type=int, default=256)
+    parser.add_argument(
+        "--repetitions",
+        type=_repetition_count,
+        default=1,
+        help="run each executor/case pair in this many fresh containers",
+    )
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
     try:
@@ -52,6 +72,16 @@ def main(argv: list[str] | None = None) -> int:
                     "Unknown case IDs: " + ", ".join(requested - known)
                 )
             cases = [case for case in cases if case["id"] in requested]
+        if args.partition:
+            cases = [
+                case
+                for case in cases
+                if case.get("partition") == args.partition
+            ]
+            if not cases:
+                raise ValueError(
+                    f"No cases use the {args.partition} partition."
+                )
         executors = list(
             dict.fromkeys(args.executor or ["prototype", "reference"])
         )
@@ -63,37 +93,58 @@ def main(argv: list[str] | None = None) -> int:
         failed_prototype = False
         infrastructure_failed = False
         with output.open("x", encoding="utf-8") as stream:
-            for executor in executors:
+            for trial_index in range(1, args.repetitions + 1):
+                trial_executors = (
+                    executors
+                    if trial_index % 2 == 1
+                    else list(reversed(executors))
+                )
                 for case in cases:
-                    record = harness.run_case(
-                        case, executor, image_id, settings, suite_hash
-                    )
-                    stream.write(json.dumps(record, allow_nan=False) + "\n")
-                    stream.flush()
-                    status = record["observed"]["status"]
-                    summaries[executor][status] += 1
-                    if (
-                        executor == "prototype"
-                        and not record["matches_expected"]
-                    ):
-                        failed_prototype = True
-                    if (
-                        status
-                        in {
-                            "infrastructure_error",
-                            "protocol_error",
-                            "crashed",
-                            "internal_error",
-                            "protocol_limit",
-                        }
-                        or record["controller_errors"]
-                    ):
-                        infrastructure_failed = True
-                    print(
-                        f"{executor:9} {case['id']}: {status}; "
-                        f"matches expectation={record['matches_expected']}",
-                        flush=True,
-                    )
+                    for executor in trial_executors:
+                        record = harness.run_case(
+                            case,
+                            executor,
+                            image_id,
+                            settings,
+                            suite_hash,
+                            trial_index=trial_index,
+                            trial_count=args.repetitions,
+                        )
+                        stream.write(
+                            json.dumps(record, allow_nan=False) + "\n"
+                        )
+                        stream.flush()
+                        status = record["observed"]["status"]
+                        summaries[executor][status] += 1
+                        if (
+                            executor == "prototype"
+                            and case["category"] != "compatibility"
+                            and not record["matches_expected"]
+                        ):
+                            failed_prototype = True
+                        if (
+                            status
+                            in {
+                                "infrastructure_error",
+                                "protocol_error",
+                                "crashed",
+                                "internal_error",
+                                "protocol_limit",
+                            }
+                            or record["controller_errors"]
+                        ):
+                            infrastructure_failed = True
+                        trial = (
+                            f" [{trial_index}/{args.repetitions}]"
+                            if args.repetitions > 1
+                            else ""
+                        )
+                        print(
+                            f"{executor:9} {case['id']}{trial}: {status}; "
+                            "matches expectation="
+                            f"{record['matches_expected']}",
+                            flush=True,
+                        )
         print(f"Results: {output}")
         print(json.dumps(summaries, sort_keys=True))
         print(

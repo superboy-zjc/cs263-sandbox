@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-25",
+  "image_id": "sha256:0a803aa41de9ee8c671537c2b31237d87c291b6ed58fbc1fff5f9802f7d7f202",
+  "accepted_runs": [
+    {
+      "experiment": "attack",
+      "local_result_file": "results/attacks-final2-20261125.jsonl",
+      "result_sha256": "5ddf6428c01d58778838b91b976295e399e2b0b3d6a6e2fbc148054562548d92",
+      "suite_sha256": "89f2cc41ca657110a6467c83cf3a2720b0cd49e05397b94c254a676922c9563d",
+      "records": 26,
+      "prototype_observed_attack_successes": 0,
+      "reference_observed_attack_successes": 2
+    },
+    {
+      "experiment": "humaneval_development",
+      "local_result_file": "results/humaneval-development-final2-20261125.jsonl",
+      "result_sha256": "2d966ed6576ce5c8d8cefe3144eb8e324cdccf4956c5c4025f0244d31be62d4c",
+      "suite_sha256": "7c5c52485a7be44809a9b4c7fe63b610c636d742cd8da108709837bbd98e2c4a",
+      "records": 40,
+      "prototype_exact_matches": 15,
+      "reference_exact_matches": 20
+    },
+    {
+      "experiment": "humaneval_heldout",
+      "local_result_file": "results/humaneval-heldout-final2-20261125.jsonl",
+      "result_sha256": "2fdf2dfebe498c645fd9eca822c1b962a750cdeb0b45036b23dfe8a1bfe97b28",
+      "suite_sha256": "7c5c52485a7be44809a9b4c7fe63b610c636d742cd8da108709837bbd98e2c4a",
+      "records": 20,
+      "prototype_exact_matches": 4,
+      "reference_exact_matches": 9
+    },
+    {
+      "experiment": "performance_20_repetitions",
+      "local_result_file": "results/performance-final3-20x-20261125.jsonl",
+      "result_sha256": "e5f104c03ed26f458ecdb635c3e1e73f7f3b62c912c2a41986aead42fd76b5f4",
+      "suite_sha256": "c6f9e7c517d64a6bd7bf8b985f291675f604ba2379cb55bedbce26bccf9c7838",
+      "records": 240,
+      "prototype_expectation_matches": 120,
+      "reference_expectation_matches": 120
+    }
+  ],
+  "totals": {
+    "records": 326,
+    "containers_inspected": 326,
+    "containers_removed": 326,
+    "inspection_retries": 0,
+    "cleanup_retries": 0,
+    "cleanup_failures": 0,
+    "records_with_controller_errors": 0
+  }
+}

@@ -65,6 +65,7 @@ _ALLOWED_NODES = frozenset(
         ast.Load,
         ast.Store,
         ast.List,
+        ast.Tuple,
         ast.Dict,
         ast.Assign,
         ast.AugAssign,
@@ -86,6 +87,10 @@ _ALLOWED_NODES = frozenset(
         ast.arg,
         ast.Return,
         ast.Call,
+        ast.Attribute,
+        ast.ListComp,
+        ast.GeneratorExp,
+        ast.comprehension,
         ast.Add,
         ast.Sub,
         ast.Mult,
@@ -114,6 +119,19 @@ _ALLOWED_NODES = frozenset(
         ast.IsNot,
         ast.In,
         ast.NotIn,
+    }
+)
+
+SAFE_METHOD_NAMES = frozenset(
+    {
+        "append",
+        "clear",
+        "index",
+        "join",
+        "lower",
+        "remove",
+        "split",
+        "startswith",
     }
 )
 
@@ -148,6 +166,12 @@ class Policy:
 
     def validate(self, tree: ast.Module) -> None:
         """Checks the complete AST, including branches that will not execute."""
+        direct_method_attributes = {
+            id(node.func)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+        }
         pending = [(tree, 0, 0, 0)]
         count = 0
         while pending:
@@ -162,7 +186,6 @@ class Policy:
                 (
                     ast.Import,
                     ast.ImportFrom,
-                    ast.Attribute,
                     ast.Global,
                     ast.Nonlocal,
                 ),
@@ -170,6 +193,15 @@ class Policy:
                 self.stop(
                     "policy_rejected",
                     f"{type(node).__name__} is prohibited",
+                    node,
+                )
+            if isinstance(node, ast.Attribute) and (
+                id(node) not in direct_method_attributes
+                or node.attr not in SAFE_METHOD_NAMES
+            ):
+                self.stop(
+                    "policy_rejected",
+                    "Attribute access is limited to reviewed method calls",
                     node,
                 )
             if type(node) not in _ALLOWED_NODES:
@@ -203,6 +235,14 @@ class Policy:
                 for target in node.targets:
                     self.validate_target(target)
             if isinstance(node, (ast.AugAssign, ast.For)):
+                self.validate_target(node.target)
+            if isinstance(node, ast.comprehension):
+                if node.is_async:
+                    self.stop(
+                        "unsupported",
+                        "Asynchronous comprehensions are not supported",
+                        node,
+                    )
                 self.validate_target(node.target)
             if isinstance(node, ast.Dict) and any(
                 key is None for key in node.keys
@@ -271,6 +311,14 @@ class Policy:
             )
 
     def validate_target(self, node: ast.AST) -> None:
+        if isinstance(node, ast.Tuple):
+            if not node.elts:
+                self.stop(
+                    "unsupported", "Empty assignment target", node
+                )
+            for child in node.elts:
+                self.validate_target(child)
+            return
         if not isinstance(node, (ast.Name, ast.Subscript)):
             self.stop(
                 "unsupported",

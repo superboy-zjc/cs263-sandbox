@@ -8,16 +8,38 @@ import pytest
 from sandbox.evaluation import summary
 
 
-def _record(executor, status, *, attack_success=None):
+def _record(
+    executor,
+    status,
+    *,
+    attack_success=None,
+    case_id="case",
+    elapsed_ms=2.0,
+    category="benign",
+    partition=None,
+    matches_expected=None,
+):
     oracle = (
         None
         if attack_success is None
         else {"kind": "canary_exposure", "attack_success": attack_success}
     )
     return {
+        "case_id": case_id,
+        "category": category,
+        "partition": partition,
         "executor": executor,
-        "observed": {"status": status, "worker_elapsed_ms": 2.0},
-        "matches_expected": status == "policy_rejected",
+        "observed": {
+            "status": status,
+            "elapsed_ms": elapsed_ms,
+            "worker_elapsed_ms": elapsed_ms + 1,
+            "peak_memory_kib": 100,
+        },
+        "matches_expected": (
+            status == "policy_rejected"
+            if matches_expected is None
+            else matches_expected
+        ),
         "attack_oracle": oracle,
         "cleanup_ok": True,
         "controller_errors": [],
@@ -41,6 +63,111 @@ def test_summarize_separates_oracles_from_expectations():
     assert reference["expectation_mismatches"] == 2
     assert reference["observed_attack_successes"] == 1
     assert reference["statuses"] == {"program_error": 1, "wall_timeout": 1}
+
+
+def test_summarize_reports_distributions_and_cases():
+    report = summary.summarize(
+        [
+            _record("prototype", "ok", case_id="first", elapsed_ms=1.0),
+            _record("prototype", "ok", case_id="first", elapsed_ms=2.0),
+            _record("prototype", "ok", case_id="first", elapsed_ms=9.0),
+        ]
+    )
+
+    prototype = report["executors"]["prototype"]
+    distribution = prototype["measurements"]["executor_elapsed_ms"]
+    assert distribution == {
+        "records": 3,
+        "minimum": 1.0,
+        "median": 2.0,
+        "mean": 4.0,
+        "p95": 9.0,
+        "maximum": 9.0,
+    }
+    assert prototype["cases"]["first"]["records"] == 3
+
+
+def test_summarize_reports_compatibility_outcomes_by_partition():
+    report = summary.summarize(
+        [
+            _record(
+                "prototype",
+                "ok",
+                case_id="correct",
+                category="compatibility",
+                partition="development",
+                matches_expected=True,
+            ),
+            _record(
+                "prototype",
+                "ok",
+                case_id="wrong",
+                category="compatibility",
+                partition="development",
+                matches_expected=False,
+            ),
+            _record(
+                "prototype",
+                "unsupported",
+                case_id="unsupported",
+                category="compatibility",
+                partition="heldout",
+                matches_expected=False,
+            ),
+        ]
+    )
+
+    compatibility = report["executors"]["prototype"]["compatibility"]
+    assert compatibility == {
+        "records": 3,
+        "cases": 3,
+        "exact_matches": 1,
+        "outcomes": {
+            "exact_match": 1,
+            "unsupported": 1,
+            "wrong_output": 1,
+        },
+        "partitions": {
+            "development": {
+                "records": 2,
+                "exact_matches": 1,
+                "outcomes": {"exact_match": 1, "wrong_output": 1},
+            },
+            "heldout": {
+                "records": 1,
+                "exact_matches": 0,
+                "outcomes": {"unsupported": 1},
+            },
+        },
+    }
+
+
+def test_summarize_exposes_mixed_input_conditions():
+    first = _record("prototype", "ok", case_id="first")
+    first.update(
+        {
+            "image_id": "sha256:first",
+            "suite_sha256": "a" * 64,
+            "trial": {"index": 1, "count": 1},
+        }
+    )
+    second = _record("reference", "ok", case_id="second")
+    second.update(
+        {
+            "image_id": "sha256:second",
+            "suite_sha256": "b" * 64,
+            "trial": {"index": 1, "count": 2},
+        }
+    )
+
+    conditions = summary.summarize([first, second])["input_conditions"]
+
+    assert conditions["image_ids"] == ["sha256:first", "sha256:second"]
+    assert conditions["suite_sha256"] == ["a" * 64, "b" * 64]
+    assert conditions["trial_counts"] == [1, 2]
+    assert conditions["mixed_images"] is True
+    assert conditions["mixed_suites"] is True
+    assert conditions["balanced_case_counts"] is False
 
 
 def test_load_records_rejects_invalid_or_empty_files(tmp_path):

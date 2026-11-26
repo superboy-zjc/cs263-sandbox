@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "performance_arithmetic_loop",
+      "category": "benign",
+      "description": "Accumulate the squares of 200 integers.",
+      "code": "total = 0\nfor number in range(200):\n    total += number * number\ntotal",
+      "expected": {"status": "ok", "value": 2646700, "stdout": ""},
+      "provenance": "Project-authored representative workload"
+    },
+    {
+      "id": "performance_list_update",
+      "category": "benign",
+      "description": "Populate and sum a bounded list through indexed assignments.",
+      "code": "values = [0] * 200\nfor index in range(200):\n    values[index] = index % 7\nsum(values)",
+      "expected": {"status": "ok", "value": 594, "stdout": ""},
+      "provenance": "Project-authored representative workload"
+    },
+    {
+      "id": "performance_dictionary_lookup",
+      "category": "benign",
+      "description": "Combine branches with repeated dictionary lookups.",
+      "code": "weights = {'a': 3, 'b': 5, 'c': 7}\ntotal = 0\nfor number in range(200):\n    if number % 3 == 0:\n        total += weights['a']\n    elif number % 3 == 1:\n        total += weights['b']\n    else:\n        total += weights['c']\ntotal",
+      "expected": {"status": "ok", "value": 998, "stdout": ""},
+      "provenance": "Project-authored representative workload"
+    },
+    {
+      "id": "performance_string_slicing",
+      "category": "benign",
+      "description": "Repeat a bounded stepped slice of a string.",
+      "code": "text = 'abcdefghijklmnopqrstuvwxyz'\nresult = ''\nfor number in range(100):\n    result = text[1:21:3]\nresult",
+      "expected": {"status": "ok", "value": "behknqt", "stdout": ""},
+      "provenance": "Project-authored representative workload"
+    },
+    {
+      "id": "performance_function_calls",
+      "category": "benign",
+      "description": "Call a user-defined arithmetic function 150 times.",
+      "code": "def transform(value):\n    return value * value + 3\ntotal = 0\nfor number in range(150):\n    total += transform(number)\ntotal",
+      "expected": {"status": "ok", "value": 1114225, "stdout": ""},
+      "provenance": "Project-authored representative workload"
+    },
+    {
+      "id": "performance_nested_data",
+      "category": "benign",
+      "description": "Traverse nested lists and call a reviewed builtin.",
+      "code": "rows = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]\ntotal = 0\nfor repeat in range(100):\n    for row in rows:\n        total += sum(row)\ntotal",
+      "expected": {"status": "ok", "value": 4500, "stdout": ""},
+      "provenance": "Project-authored representative workload"
+    }
+  ]
+}

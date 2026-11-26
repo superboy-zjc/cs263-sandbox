@@ -70,12 +70,16 @@ an unprivileged user, dropped capabilities, one CPU, 256 MiB of memory, and a
 five-second wall deadline. The writable `/tmp` is a new 8 MiB `tmpfs` used only
 for the canary and ordinary temporary data.
 
-## Initial result
+## Revalidated result
 
-The initial run on 2026-11-18 used attack-suite SHA-256
+The post-compatibility run on 2026-11-25 used attack-suite SHA-256
 `89f2cc41ca657110a6467c83cf3a2720b0cd49e05397b94c254a676922c9563d`
 and image ID
-`sha256:db11a7f71284328609eeb427342d5fe26b0305d26f9f35411af1a2fe872e7650`.
+`sha256:0a803aa41de9ee8c671537c2b31237d87c291b6ed58fbc1fff5f9802f7d7f202`.
+The accepted JSON Lines file had SHA-256
+`5ddf6428c01d58778838b91b976295e399e2b0b3d6a6e2fbc148054562548d92`.
+This run followed the addition of tuples, reviewed exact-type methods,
+comprehensions, and additional bounded builtins.
 
 | Executor | Cases | Observed attack successes | Outcomes | Cleanup |
 | --- | ---: | ---: | --- | ---: |

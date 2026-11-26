@@ -19,6 +19,8 @@ from sandbox.evaluation.bootstrap import CANARY_ENVIRONMENT_VARIABLE
 REFERENCE_COMMIT = "96f33faaf028479119ec8d34507b47694cf14e34"
 MAX_RESPONSE_BYTES = 131_072
 MAX_STDERR_BYTES = 16_384
+CLEANUP_ATTEMPTS = 3
+INSPECTION_ATTEMPTS = 3
 EXECUTOR_STATUSES = frozenset(
     {
         "ok",
@@ -32,8 +34,16 @@ EXECUTOR_STATUSES = frozenset(
     }
 )
 CASE_CATEGORIES = frozenset(
-    {"attack", "benign", "correctness", "policy", "resource"}
+    {
+        "attack",
+        "benign",
+        "compatibility",
+        "correctness",
+        "policy",
+        "resource",
+    }
 )
+COMPATIBILITY_PARTITIONS = frozenset({"development", "heldout"})
 ATTACK_ORACLE_KINDS = frozenset(
     {"canary_exposure", "outer_termination"}
 )
@@ -108,6 +118,8 @@ def load_cases(path: Path) -> tuple[list[dict], str]:
             raise ValueError(f"Missing or invalid expectation: {identifier}")
         if case["category"] == "attack":
             _validate_attack_case(case)
+        if case["category"] == "compatibility":
+            _validate_compatibility_case(case)
     return cases, hashlib.sha256(payload).hexdigest()
 
 
@@ -157,6 +169,50 @@ def _validate_attack_case(case: dict) -> None:
             raise ValueError(
                 f"Attack case {identifier} has invalid termination statuses."
             )
+
+
+def _validate_compatibility_case(case: dict) -> None:
+    """Require enough metadata to reproduce an external compatibility case."""
+    identifier = case["id"]
+    if case.get("partition") not in COMPATIBILITY_PARTITIONS:
+        raise ValueError(
+            f"Compatibility case {identifier} needs a valid partition."
+        )
+    if case["expected"].get("status") != "ok":
+        raise ValueError(
+            f"Compatibility case {identifier} must target successful output."
+        )
+    if type(case.get("description")) is not str or not case[
+        "description"
+    ].strip():
+        raise ValueError(
+            f"Compatibility case {identifier} needs a description."
+        )
+
+    provenance = case.get("provenance")
+    required_fields = (
+        "source_title",
+        "source_url",
+        "source_locator",
+        "dataset_sha256",
+        "adaptation",
+    )
+    if type(provenance) is not dict or any(
+        type(provenance.get(field)) is not str
+        or not provenance[field].strip()
+        for field in required_fields
+    ):
+        raise ValueError(
+            f"Compatibility case {identifier} needs complete provenance."
+        )
+    if re.fullmatch(r"https://[^\s]+", provenance["source_url"]) is None:
+        raise ValueError(
+            f"Compatibility case {identifier} needs an HTTPS source URL."
+        )
+    if re.fullmatch(r"[0-9a-f]{64}", provenance["dataset_sha256"]) is None:
+        raise ValueError(
+            f"Compatibility case {identifier} needs a dataset SHA-256."
+        )
 
 
 def resolve_image(image: str) -> str:
@@ -287,6 +343,60 @@ def _inspect_container(name: str) -> dict:
     }
 
 
+def _inspect_container_with_retries(
+    name: str,
+) -> tuple[dict, int, list[dict]]:
+    """Inspect one exact container with bounded transient retries."""
+    diagnostics = []
+    for attempt in range(1, INSPECTION_ATTEMPTS + 1):
+        try:
+            evidence = _inspect_container(name)
+        except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+            diagnostics.append(
+                {"attempt": attempt, "error": type(error).__name__}
+            )
+        else:
+            return evidence, attempt, diagnostics
+        if attempt < INSPECTION_ATTEMPTS:
+            time.sleep(0.05 * attempt)
+    return {}, INSPECTION_ATTEMPTS, diagnostics
+
+
+def _remove_container(name: str) -> tuple[bool, int, list[dict]]:
+    """Remove one exact evaluation container with bounded transient retries."""
+    diagnostics = []
+    for attempt in range(1, CLEANUP_ATTEMPTS + 1):
+        try:
+            completed = subprocess.run(
+                ["docker", "rm", "--force", name],
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            diagnostics.append(
+                {"attempt": attempt, "error": type(error).__name__}
+            )
+        else:
+            if completed.returncode == 0:
+                return True, attempt, diagnostics
+            error_text = completed.stderr
+            if isinstance(error_text, bytes):
+                error_text = error_text.decode(errors="replace")
+            diagnostics.append(
+                {
+                    "attempt": attempt,
+                    "returncode": completed.returncode,
+                    "error": (error_text or "Docker returned a failure.")[
+                        :500
+                    ],
+                }
+            )
+        if attempt < CLEANUP_ATTEMPTS:
+            time.sleep(0.05 * attempt)
+    return False, CLEANUP_ATTEMPTS, diagnostics
+
+
 def _failure(status: str, error: str) -> dict:
     return {
         "status": status,
@@ -356,10 +466,21 @@ def run_case(
     image_id: str,
     settings: Settings,
     suite_sha256: str,
+    *,
+    trial_index: int = 1,
+    trial_count: int = 1,
 ) -> dict:
     """Run one case in fresh containment and return an auditable record."""
     if executor not in {"prototype", "reference"}:
         raise ValueError("Unknown executor.")
+    if (
+        type(trial_index) is not int
+        or type(trial_count) is not int
+        or trial_count < 1
+        or trial_index < 1
+        or trial_index > trial_count
+    ):
+        raise ValueError("Invalid trial index or count.")
     name = f"cs263-eval-{uuid.uuid4().hex}"
     request = json.dumps({"executor": executor, "code": case["code"]}).encode()
     if len(request) > 65_536:
@@ -428,9 +549,13 @@ def run_case(
     )
     started = time.monotonic()
     evidence = {}
+    inspection_attempts = 0
+    inspection_diagnostics = []
     controller_errors = []
     execution_wall_ms = None
     cleanup_ok = False
+    cleanup_attempts = 0
+    cleanup_diagnostics = []
     output = b""
     stderr = b""
     observed = _failure("infrastructure_error", "Controller did not complete.")
@@ -441,7 +566,7 @@ def run_case(
         execution_wall_ms = round((time.monotonic() - started) * 1000, 3)
         if reason:
             try:
-                subprocess.run(
+                completed = subprocess.run(
                     ["docker", "kill", name],
                     capture_output=True,
                     timeout=10,
@@ -449,10 +574,22 @@ def run_case(
                 )
             except (OSError, subprocess.TimeoutExpired) as error:
                 controller_errors.append(f"kill: {type(error).__name__}")
-        try:
-            evidence = _inspect_container(name)
-        except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
-            controller_errors.append(f"inspect: {type(error).__name__}")
+            else:
+                if completed.returncode:
+                    controller_errors.append(
+                        "kill: Docker returned "
+                        f"status {completed.returncode}."
+                    )
+        (
+            evidence,
+            inspection_attempts,
+            inspection_diagnostics,
+        ) = _inspect_container_with_retries(name)
+        if not evidence:
+            controller_errors.append(
+                "inspect: state unavailable after "
+                f"{inspection_attempts} attempts."
+            )
         if reason:
             observed = _failure(reason, "External controller stopped the run.")
         elif evidence.get("oom_killed"):
@@ -482,18 +619,13 @@ def run_case(
         controller_errors.append(f"exchange: {type(error).__name__}")
         observed = _failure("infrastructure_error", "Docker command failed.")
     finally:
-        try:
-            cleanup = subprocess.run(
-                ["docker", "rm", "--force", name],
-                capture_output=True,
-                timeout=10,
-                check=False,
+        cleanup_ok, cleanup_attempts, cleanup_diagnostics = _remove_container(
+            name
+        )
+        if not cleanup_ok:
+            controller_errors.append(
+                f"remove: cleanup failed after {cleanup_attempts} attempts."
             )
-            cleanup_ok = cleanup.returncode == 0
-            if not cleanup_ok:
-                controller_errors.append("remove: Docker returned a failure.")
-        except (OSError, subprocess.TimeoutExpired) as error:
-            controller_errors.append(f"remove: {type(error).__name__}")
     attack_oracle = evaluate_attack_oracle(
         case, observed, output, stderr, canary
     )
@@ -501,6 +633,8 @@ def run_case(
         "schema_version": 1,
         "case_id": case["id"],
         "category": case["category"],
+        "partition": case.get("partition"),
+        "trial": {"index": trial_index, "count": trial_count},
         "description": case.get("description"),
         "attack_goal": case.get("attack_goal"),
         "provenance": case.get("provenance"),
@@ -518,8 +652,18 @@ def run_case(
         "matches_expected": matches_expected(observed, case["expected"]),
         "attack_oracle": attack_oracle,
         "container": evidence,
+        "inspection": {
+            "ok": bool(evidence),
+            "attempts": inspection_attempts,
+            "diagnostics": inspection_diagnostics,
+        },
         "container_name": name,
         "cleanup_ok": cleanup_ok,
+        "cleanup": {
+            "ok": cleanup_ok,
+            "attempts": cleanup_attempts,
+            "diagnostics": cleanup_diagnostics,
+        },
         "controller_errors": controller_errors,
         "execution_wall_ms": execution_wall_ms,
         "elapsed_wall_ms": round((time.monotonic() - started) * 1000, 3),

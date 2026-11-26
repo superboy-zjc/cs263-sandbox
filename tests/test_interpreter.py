@@ -164,6 +164,73 @@ class InterpreterTest(unittest.TestCase):
         self.assert_value("{1: 2} == {1: 2}", True)
         self.assert_value("2 in [1, 2] and 'x' in {'x': 3}", True)
 
+    def test_tuples_unpacking_and_iteration(self):
+        self.assert_value("(1, 2, 3)", [1, 2, 3])
+        self.assert_value(
+            "left, (middle, right) = [1, (2, 3)]\n"
+            "[left, middle, right]",
+            [1, 2, 3],
+        )
+        self.assert_value(
+            "total = 0\nfor left, right in [(1, 2), (3, 4)]:\n"
+            "    total += left + right\ntotal",
+            10,
+        )
+        self.assert_value("(1, 2) + (3,)", [1, 2, 3])
+        self.assert_value("2 in (1, 2, 3)", True)
+
+    def test_reviewed_exact_type_methods(self):
+        self.assert_value(
+            "values = []\nvalues.append('A')\nvalues.append('b')\n"
+            "'-'.join(values).lower()",
+            "a-b",
+        )
+        self.assert_value("'a  b'.split()", ["a", "b"])
+        self.assert_value("'a,b,'.split(',')", ["a", "b", ""])
+        self.assert_value("'alpha'.startswith('al')", True)
+        self.assert_value("(4, 5, 6).index(5)", 1)
+        self.assert_value(
+            "values = [2, 1, 2]\nvalues.remove(2)\nvalues", [1, 2]
+        )
+        result = run("value = 1\nvalue.append(2)")
+        self.assertEqual(result["status"], "policy_rejected")
+
+    def test_comprehensions_are_bounded_and_do_not_leak_targets(self):
+        self.assert_value(
+            "[number * 2 for number in range(6) if number % 2 == 0]",
+            [0, 4, 8],
+        )
+        self.assert_value(
+            "sum(number for number in range(5) if number > 1)", 9
+        )
+        self.assert_value(
+            "[[left, right] for left in [1, 2] for right in [3, 4]]",
+            [[1, 3], [1, 4], [2, 3], [2, 4]],
+        )
+        self.assertEqual(
+            run("[item for item in [1]]\nitem")["status"],
+            "program_error",
+        )
+        self.assert_value(
+            "value = 5\ndef read_outer():\n"
+            "    [value for value in [1]]\n"
+            "    return value\nread_outer()",
+            5,
+        )
+        result = run(
+            "[number for number in range(5)]",
+            limits=Limits(max_collection_items=4),
+        )
+        self.assertEqual(result["status"], "resource_limit")
+
+    def test_reviewed_conversion_and_sequence_builtins(self):
+        self.assert_value(
+            "[str(12), int('3'), isinstance(3, int)]", ["12", 3, True]
+        )
+        self.assert_value("list(map(str, [1, 2]))", ["1", "2"])
+        self.assert_value("list(enumerate('ab'))", [[0, "a"], [1, "b"]])
+        self.assert_value("sorted([3, 1, 2])", [1, 2, 3])
+
     def test_augmented_subscript_evaluates_index_once(self):
         self.assert_value(
             "calls = [0]\ndef index():\n    calls[0] += 1\n    return 0\n"
@@ -190,10 +257,8 @@ class InterpreterTest(unittest.TestCase):
     def test_unsupported_constructs_and_invalid_control_flow(self):
         for code in (
             "class Thing:\n    pass",
-            "[x for x in range(3)]",
             "lambda x: x",
             "print('x', end='')",
-            "a, b = [1,2]",
             "return 1",
             "break",
             "for x in []:\n    pass\nelse:\n    break",

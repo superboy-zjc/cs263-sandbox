@@ -4,6 +4,7 @@ from collections import Counter
 import json
 import math
 from pathlib import Path
+import statistics
 from typing import Any
 
 
@@ -15,6 +16,179 @@ def _mean(values: list[float]) -> float | None:
     if not values:
         return None
     return round(math.fsum(values) / len(values), 3)
+
+
+def _distribution(values: list[float]) -> dict[str, float | int | None]:
+    """Return bounded descriptive statistics using nearest-rank P95."""
+    if not values:
+        return {
+            "records": 0,
+            "minimum": None,
+            "median": None,
+            "mean": None,
+            "p95": None,
+            "maximum": None,
+        }
+    ordered = sorted(values)
+    p95_index = max(0, math.ceil(0.95 * len(ordered)) - 1)
+    return {
+        "records": len(ordered),
+        "minimum": round(ordered[0], 3),
+        "median": round(statistics.median(ordered), 3),
+        "mean": _mean(ordered),
+        "p95": round(ordered[p95_index], 3),
+        "maximum": round(ordered[-1], 3),
+    }
+
+
+def _finite_values(records: list[dict[str, Any]], *path: str) -> list[float]:
+    """Read finite, exact numeric measurements from nested result fields."""
+    values = []
+    for record in records:
+        value: Any = record
+        for name in path:
+            if type(value) is not dict:
+                value = None
+                break
+            value = value.get(name)
+        if type(value) in (int, float) and math.isfinite(value):
+            values.append(value)
+    return values
+
+
+def _measurements(records: list[dict[str, Any]]) -> dict[str, dict]:
+    """Summarize executor, worker, container, and memory measurements."""
+    return {
+        "executor_elapsed_ms": _distribution(
+            _finite_values(records, "observed", "elapsed_ms")
+        ),
+        "worker_elapsed_ms": _distribution(
+            _finite_values(records, "observed", "worker_elapsed_ms")
+        ),
+        "execution_wall_ms": _distribution(
+            _finite_values(records, "execution_wall_ms")
+        ),
+        "elapsed_wall_ms": _distribution(
+            _finite_values(records, "elapsed_wall_ms")
+        ),
+        "peak_memory_kib": _distribution(
+            _finite_values(records, "observed", "peak_memory_kib")
+        ),
+    }
+
+
+def _compatibility_outcome(record: dict[str, Any]) -> str:
+    """Classify an external benign case without hiding wrong output values."""
+    if record.get("matches_expected") is True:
+        return "exact_match"
+    status = record["observed"]["status"]
+    if status == "ok":
+        return "wrong_output"
+    return status
+
+
+def _compatibility_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize compatibility records by partition and observed outcome."""
+    selected = [
+        record
+        for record in records
+        if record.get("category") == "compatibility"
+    ]
+    partitions = {}
+    for partition in sorted(
+        {
+            record.get("partition")
+            for record in selected
+            if type(record.get("partition")) is str
+        }
+    ):
+        partition_records = [
+            record
+            for record in selected
+            if record.get("partition") == partition
+        ]
+        partitions[partition] = {
+            "records": len(partition_records),
+            "exact_matches": sum(
+                record.get("matches_expected") is True
+                for record in partition_records
+            ),
+            "outcomes": dict(
+                sorted(
+                    Counter(
+                        _compatibility_outcome(record)
+                        for record in partition_records
+                    ).items()
+                )
+            ),
+        }
+    return {
+        "records": len(selected),
+        "cases": len({record["case_id"] for record in selected}),
+        "exact_matches": sum(
+            record.get("matches_expected") is True for record in selected
+        ),
+        "outcomes": dict(
+            sorted(
+                Counter(
+                    _compatibility_outcome(record) for record in selected
+                ).items()
+            )
+        ),
+        "partitions": partitions,
+    }
+
+
+def _input_conditions(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Expose fingerprints that must agree before comparing measurements."""
+    image_ids = sorted(
+        {
+            record["image_id"]
+            for record in records
+            if type(record.get("image_id")) is str
+        }
+    )
+    suite_hashes = sorted(
+        {
+            record["suite_sha256"]
+            for record in records
+            if type(record.get("suite_sha256")) is str
+        }
+    )
+    trial_counts = sorted(
+        {
+            record["trial"]["count"]
+            for record in records
+            if type(record.get("trial")) is dict
+            and type(record["trial"].get("count")) is int
+        }
+    )
+    executors = sorted({record["executor"] for record in records})
+    case_counts = {
+        executor: dict(
+            sorted(
+                Counter(
+                    record["case_id"]
+                    for record in records
+                    if record["executor"] == executor
+                ).items()
+            )
+        )
+        for executor in executors
+    }
+    balanced = bool(case_counts) and all(
+        counts == next(iter(case_counts.values()))
+        for counts in case_counts.values()
+    )
+    return {
+        "image_ids": image_ids,
+        "suite_sha256": suite_hashes,
+        "trial_counts": trial_counts,
+        "mixed_images": len(image_ids) > 1,
+        "mixed_suites": len(suite_hashes) > 1,
+        "balanced_case_counts": balanced,
+        "case_counts": case_counts,
+    }
 
 
 def load_records(path: Path) -> list[dict[str, Any]]:
@@ -37,6 +211,7 @@ def load_records(path: Path) -> list[dict[str, Any]]:
             if (
                 type(record) is not dict
                 or type(record.get("executor")) is not str
+                or type(record.get("case_id")) is not str
                 or type(record.get("observed")) is not dict
                 or type(record["observed"].get("status")) is not str
             ):
@@ -62,19 +237,27 @@ def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
             for record in selected
             if type(record.get("attack_oracle")) is dict
         ]
-        worker_times = [
-            record["observed"]["worker_elapsed_ms"]
-            for record in selected
-            if type(record["observed"].get("worker_elapsed_ms"))
-            in (int, float)
-            and math.isfinite(record["observed"]["worker_elapsed_ms"])
-        ]
-        execution_times = [
-            record["execution_wall_ms"]
-            for record in selected
-            if type(record.get("execution_wall_ms")) in (int, float)
-            and math.isfinite(record["execution_wall_ms"])
-        ]
+        worker_times = _finite_values(
+            selected, "observed", "worker_elapsed_ms"
+        )
+        execution_times = _finite_values(selected, "execution_wall_ms")
+        case_summaries = {}
+        for case_id in sorted({record["case_id"] for record in selected}):
+            case_records = [
+                record for record in selected if record["case_id"] == case_id
+            ]
+            case_summaries[case_id] = {
+                "records": len(case_records),
+                "statuses": dict(
+                    sorted(
+                        Counter(
+                            record["observed"]["status"]
+                            for record in case_records
+                        ).items()
+                    )
+                ),
+                "measurements": _measurements(case_records),
+            }
         executors[executor] = {
             "records": len(selected),
             "statuses": dict(sorted(statuses.items())),
@@ -92,6 +275,16 @@ def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
             "cleanup_failures": sum(
                 record.get("cleanup_ok") is not True for record in selected
             ),
+            "inspection_retries": sum(
+                type(record.get("inspection")) is dict
+                and record["inspection"].get("attempts", 0) > 1
+                for record in selected
+            ),
+            "cleanup_retries": sum(
+                type(record.get("cleanup")) is dict
+                and record["cleanup"].get("attempts", 0) > 1
+                for record in selected
+            ),
             "records_with_controller_errors": sum(
                 bool(record.get("controller_errors")) for record in selected
             ),
@@ -99,5 +292,12 @@ def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
             "mean_worker_elapsed_ms": _mean(worker_times),
             "execution_timing_records": len(execution_times),
             "mean_execution_wall_ms": _mean(execution_times),
+            "compatibility": _compatibility_summary(selected),
+            "measurements": _measurements(selected),
+            "cases": case_summaries,
         }
-    return {"schema_version": 1, "executors": executors}
+    return {
+        "schema_version": 1,
+        "input_conditions": _input_conditions(records),
+        "executors": executors,
+    }

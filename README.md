@@ -8,6 +8,12 @@ In this project, we focus on **language-based sandboxing**, which enforces secur
 
 Finally, we will evaluate the proposed framework in terms of both security and performance, using a dataset of sandbox-escape techniques collected from published security research and Capture-the-Flag (CTF) competitions.
 
+The completed design, related-work survey, methods, final results, validity
+discussion, and conclusion are in the
+[final report](docs/final-report.md). A machine-readable manifest of accepted
+run hashes and aggregate outcomes is in
+[`docs/evaluation-manifest.json`](docs/evaluation-manifest.json).
+
 ##  Steps
 
 - **Survey sandboxing approaches:** Compare virtual machines, Docker containers, process-based isolation, and language-based sandboxing to explain the value of language-level controls.
@@ -15,11 +21,12 @@ Finally, we will evaluate the proposed framework in terms of both security and p
 - **Develop an interpreter-based prototype:** Execute a supported Python subset through a custom AST interpreter. Enforce whitelist and blacklist policies on actual call targets, attribute access, imports, and returned values as execution proceeds, including indirect access through variables. Capture results, apply execution limits, and record rejected operations with their reasons.
 - **Evaluate security and efficiency:** Collect relevant cases from published datasets and CTF communities, then measure attack success, correctness on benign programs, and execution overhead.
 
-## First experiment
+## Prototype and experiments
 
-A minimal AST interpreter and 15 project-authored regression cases are now
-available. The initial subset supports basic data, arithmetic, assignments,
-conditions, loops, simple functions, and a few reviewed builtins. See the
+A restricted AST interpreter and 15 project-authored regression cases are
+available. The subset supports bounded plain data, arithmetic, assignments,
+conditions, loops, comprehensions, simple functions, and reviewed builtins and
+exact-type methods. See the
 [execution policy](docs/policy.md) for supported behavior and limits. These are
 smoke tests, not a research or CTF attack benchmark.
 
@@ -57,6 +64,40 @@ python3 -m sandbox summarize results/<result-file>.jsonl
 See [attack evaluation](docs/attack-evaluation.md) for the threat model,
 provenance, observability design, initial result, and limitations. This starter
 suite is not a comprehensive Python sandbox-escape corpus.
+
+For repeated cold-execution measurements, run the six representative benign
+workloads 20 times per executor. Every repetition uses a fresh container, and
+executor order is reversed on alternating trials:
+
+```sh
+python3 -m sandbox benchmark \
+  --cases benchmarks/performance.json \
+  --repetitions 20 \
+  --output results/performance.jsonl
+python3 -m sandbox summarize results/performance.jsonl
+```
+
+See [performance evaluation](docs/performance-evaluation.md) for measurement
+boundaries, the initial repeated result, excluded runs, and limitations.
+
+For independent benign compatibility, regenerate the pinned 30-task HumanEval
+sample and run its development or held-out partition:
+
+```sh
+python3 scripts/build_humaneval_suite.py /tmp/HumanEval.jsonl.gz
+python3 -m sandbox benchmark \
+  --cases benchmarks/humaneval.json \
+  --partition heldout \
+  --wall-seconds 15 \
+  --output results/humaneval-heldout.jsonl
+```
+
+The final prototype matched 4/10 tasks whose runtime outcomes were held out
+until the implementation was frozen; it matched 15/20 development tasks, for a
+descriptive total of 19/30. See the
+[compatibility evaluation](docs/compatibility-evaluation.md) for the pinned
+dataset URL and hash, deterministic selection rule, adaptation, complete
+results, observability, and limitations.
 
 To run one case or one executor:
 
